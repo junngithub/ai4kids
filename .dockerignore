@@ -1,0 +1,10 @@
+node_modules
+.next
+.git
+legacy
+*.log
+.env
+.env.local
+tertiar2_newTIWp2025.sql
+README.md
+.claude

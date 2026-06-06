@@ -1,0 +1,106 @@
+"use client";
+
+import { useState } from "react";
+import { signIn } from "next-auth/react";
+import Link from "next/link";
+
+export default function LoginPage() {
+  const [tab, setTab] = useState<"kid" | "grownup">("kid");
+  const [identifier, setIdentifier] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleKidLogin(e: React.FormEvent) {
+    e.preventDefault();
+    setError("");
+    setLoading(true);
+    const res = await signIn("credentials", {
+      identifier,
+      password,
+      redirect: false,
+    });
+    setLoading(false);
+    if (res?.error) {
+      setError("Oops! That username or password didn't work. Try again 🙂");
+    } else {
+      window.location.href = "/dashboard";
+    }
+  }
+
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-br from-sky/20 via-cream to-coral/20 p-4">
+      <div className="w-full max-w-md rounded-[2rem] bg-white p-8 shadow-xl ring-1 ring-amber-100">
+        <Link href="/" className="flex items-center justify-center gap-2 font-fun text-2xl font-700 text-slate-800">
+          <span aria-hidden>🤖</span> AI <span className="text-coral">Kids</span>
+        </Link>
+
+        <div className="mt-6 grid grid-cols-2 gap-2 rounded-full bg-amber-50 p-1 font-fun font-600">
+          <button
+            onClick={() => setTab("kid")}
+            className={`rounded-full py-2 transition ${tab === "kid" ? "bg-coral text-white shadow" : "text-slate-500"}`}
+          >
+            🚀 I'm a Kid
+          </button>
+          <button
+            onClick={() => setTab("grownup")}
+            className={`rounded-full py-2 transition ${tab === "grownup" ? "bg-sky-500 text-white shadow" : "text-slate-500"}`}
+          >
+            👋 Parent / Admin
+          </button>
+        </div>
+
+        {tab === "kid" ? (
+          <form onSubmit={handleKidLogin} className="mt-6 space-y-4">
+            <div>
+              <label className="font-fun font-600 text-sm text-slate-600">Username</label>
+              <input
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                placeholder="e.g. supernova"
+                autoCapitalize="none"
+                className="mt-1 w-full rounded-2xl border-2 border-amber-100 bg-amber-50/40 px-4 py-3 font-round text-lg outline-none focus:border-coral"
+              />
+            </div>
+            <div>
+              <label className="font-fun font-600 text-sm text-slate-600">Password</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="your secret word"
+                className="mt-1 w-full rounded-2xl border-2 border-amber-100 bg-amber-50/40 px-4 py-3 font-round text-lg outline-none focus:border-coral"
+              />
+            </div>
+            {error && <p className="text-sm text-coral">{error}</p>}
+            <button
+              disabled={loading}
+              className="w-full rounded-2xl bg-coral py-3 font-fun text-lg font-700 text-white shadow-lg shadow-coral/30 transition hover:scale-[1.02] disabled:opacity-60"
+            >
+              {loading ? "Logging in…" : "Let's go! 🎉"}
+            </button>
+            <p className="text-center text-xs text-slate-400">
+              Ask your parent for your username and secret word.
+            </p>
+          </form>
+        ) : (
+          <div className="mt-6 space-y-4">
+            <p className="text-center font-round text-slate-500">
+              Parents and admins sign in with Google.
+            </p>
+            <button
+              onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
+              className="flex w-full items-center justify-center gap-3 rounded-2xl border-2 border-slate-200 bg-white py-3 font-fun font-600 text-slate-700 transition hover:bg-slate-50"
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.27-4.74 3.27-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84A11 11 0 0 0 12 23z"/><path fill="#FBBC05" d="M5.84 14.1a6.6 6.6 0 0 1 0-4.2V7.06H2.18a11 11 0 0 0 0 9.88l3.66-2.84z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1A11 11 0 0 0 2.18 7.06l3.66 2.84C6.71 7.31 9.14 5.38 12 5.38z"/></svg>
+              Continue with Google
+            </button>
+            <p className="text-center text-xs text-slate-400">
+              New here? Signing in creates your parent account automatically.
+            </p>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
