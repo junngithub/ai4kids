@@ -37,6 +37,16 @@ export function SiteFooter() {
       </div>
       <div className="border-t border-amber-100 py-4 text-center text-xs text-slate-400">
         © {new Date().getFullYear()} AI Kids Academy. Made with curiosity & code.
+        <span className="mx-1">·</span>
+        Powered by{" "}
+        <a
+          href="https://www.tertiarycourses.com.sg/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="font-600 text-slate-500 underline hover:text-coral"
+        >
+          Tertiary Infotech Academy Pte Ltd
+        </a>
       </div>
     </footer>
   );
