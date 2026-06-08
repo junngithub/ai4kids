@@ -5,6 +5,7 @@ import { eq, sql } from "drizzle-orm";
 import { getPortalSession } from "@/lib/portal-session";
 import { getLearnerStats, getLearnerBadges } from "@/lib/portal-queries";
 import { CATEGORY_BY_SLUG } from "@/lib/portal-content";
+import { ESCAPE_ROOMS } from "@/lib/escape-rooms";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,10 @@ export const dynamic = "force-dynamic";
 const LIVE_ROUTES: Record<string, string> = {
   "ai-storytelling": "/learn/storytelling",
   "ai-phonics": "/learn/phonics",
+  // Each sample escape room is its own activity, routed by room slug.
+  ...Object.fromEntries(
+    ESCAPE_ROOMS.map((r) => [r.activitySlug, `/learn/escape-room/${r.slug}`]),
+  ),
 };
 
 export default async function LearnHome() {
@@ -34,6 +39,10 @@ export default async function LearnHome() {
     .where(eq(activityCompletions.learnerId, learnerId))
     .groupBy(activityCompletions.activityId);
   const bestById = new Map(best.map((b) => [b.activityId, b.best]));
+
+  // Escape rooms collapse into a single tile (emitted at the first one).
+  const escapeRooms = all.filter((a) => a.category === "escape-room");
+  const escapePlayed = escapeRooms.filter((a) => bestById.get(a.id) != null).length;
 
   return (
     <div>
@@ -64,12 +73,17 @@ export default async function LearnHome() {
       {/* Activity cards */}
       <h2 className="mt-8 font-fun text-2xl font-700 text-slate-900">Activities</h2>
       <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {all.map((a) => {
+        {all.flatMap((a) => {
+          // Bunch all escape rooms into one tile, emitted at the first one.
+          if (a.category === "escape-room") {
+            return a.id === escapeRooms[0]?.id ? [<EscapeRoomsTile key="escape-hub" count={escapeRooms.length} played={escapePlayed} />] : [];
+          }
+
           const cat = CATEGORY_BY_SLUG[a.category];
           const route = LIVE_ROUTES[a.slug];
           const playable = a.live && route;
           const myBest = bestById.get(a.id);
-          return (
+          return [
             <div
               key={a.id}
               className={`flex flex-col rounded-3xl bg-white p-6 shadow-sm ring-1 ${cat?.ring ?? "ring-amber-100"}`}
@@ -97,10 +111,38 @@ export default async function LearnHome() {
                   Sneak peek 👀
                 </Link>
               )}
-            </div>
-          );
+            </div>,
+          ];
         })}
       </div>
     </div>
+  );
+}
+
+/** A single tile on /learn that groups all the escape rooms and links to their hub. */
+function EscapeRoomsTile({ count, played }: { count: number; played: number }) {
+  const cat = CATEGORY_BY_SLUG["escape-room"];
+  return (
+    <Link
+      href="/learn/escape-room"
+      className={`group flex flex-col rounded-3xl bg-white p-6 shadow-sm ring-1 ${cat.ring} transition hover:-translate-y-0.5 hover:shadow-md`}
+    >
+      <div className="flex items-start justify-between">
+        <div className={`inline-flex h-14 w-14 items-center justify-center rounded-2xl text-3xl ${cat.accent}`}>
+          {cat.emoji}
+        </div>
+        <span className="rounded-full bg-amber-50 px-2.5 py-1 font-fun text-xs font-700 text-amber-600 ring-1 ring-amber-100">
+          {count} rooms
+        </span>
+      </div>
+      <h3 className="mt-3 font-fun text-lg font-700 text-slate-800">{cat.title}</h3>
+      <p className="mt-1 flex-1 text-sm text-slate-500">{cat.blurb}</p>
+      <div className="mt-2 text-xs text-slate-400">
+        {played > 0 ? `${played} of ${count} rooms explored` : "Not explored yet"}
+      </div>
+      <span className="mt-3 rounded-full bg-coral px-4 py-2.5 text-center font-fun font-700 text-white shadow transition group-hover:scale-105">
+        Enter ▶
+      </span>
+    </Link>
   );
 }

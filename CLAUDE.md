@@ -11,9 +11,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Commands
 
 ```bash
-npm run dev            # Next.js dev server (Turbopack) on http://localhost:3070
+npm run dev            # Next.js dev server (Turbopack) on http://localhost:3080
 npm run build          # Production build
-npm run start          # Run the production build locally on http://localhost:3070
+npm run start          # Run the production build locally on http://localhost:3080
 npm run lint           # Next lint (note: ESLint isn't configured at the root; Next's wrapper is what's used)
 
 npm run db:push        # Apply src/db/schema.ts to local Postgres (dev only)
@@ -27,11 +27,11 @@ npm run migrate:wp     # Import a WordPress SQL dump (parses wp_*, downloads ima
 
 There is no test suite — verification is `npm run build` + browser smoke-testing the dev server. The Next build also runs the TS type-check, so it's the canonical "is this broken" gate.
 
-**Port**: this project runs on **3070**, not Next's default 3000 — port 3000 is used by another local app. Both `dev` and `start` pass `-p 3070`; `.env` (`AUTH_URL`, `NEXT_PUBLIC_SITE_URL`) is pinned to `http://localhost:3070`. If you change the port, update all three in lockstep or Auth.js will silently issue cookies for the wrong host.
+**Port**: this project runs on **3080**, not Next's default 3000 — port 3000 is used by another local app. Both `dev` and `start` pass `-p 3080`; `.env` (`AUTH_URL`, `NEXT_PUBLIC_SITE_URL`) is pinned to `http://localhost:3080`. If you change the port, update all three in lockstep or Auth.js will silently issue cookies for the wrong host.
 
-**ALWAYS** start the local dev server at `http://localhost:3070/` — never on 3000 or any other port. Use `npm run dev` (which already binds 3070); never `next dev` directly without `-p 3070`. When opening the app in a browser or sharing URLs, use `http://localhost:3070/` (not `localhost:3000`). Before starting, check that 3070 is free with `lsof -ti:3070`; if a stale process is bound, kill it rather than falling back to another port.
+**ALWAYS** start the local dev server at `http://localhost:3080/` — never on 3000 or any other port. Use `npm run dev` (which already binds 3080); never `next dev` directly without `-p 3080`. When opening the app in a browser or sharing URLs, use `http://localhost:3080/` (not `localhost:3000`). Before starting, check that 3080 is free with `lsof -ti:3080`; if a stale process is bound, kill it rather than falling back to another port.
 
-**If the user reports `http://localhost:3070/` is down (or "the local site isn't working", "localhost not loading", etc.), bring it back up immediately — do NOT wait for the user to ask explicitly.** Procedure: (1) `lsof -ti:3070` to see if anything is bound; (2) if nothing is bound, run `npm run dev` in the background; (3) verify with `curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:3070/` returning `HTTP 200` before reporting success. Treat dev-server restarts as part of the standard workflow, not a separate task.
+**If the user reports `http://localhost:3080/` is down (or "the local site isn't working", "localhost not loading", etc.), bring it back up immediately — do NOT wait for the user to ask explicitly.** Procedure: (1) `lsof -ti:3080` to see if anything is bound; (2) if nothing is bound, run `npm run dev` in the background; (3) verify with `curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:3080/` returning `HTTP 200` before reporting success. Treat dev-server restarts as part of the standard workflow, not a separate task.
 
 ### Ad-hoc TS scripts
 
