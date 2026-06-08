@@ -1,5 +1,5 @@
 import bcrypt from "bcryptjs";
-import { eq } from "drizzle-orm";
+import { and, eq, notInArray } from "drizzle-orm";
 import { db } from "../src/db";
 import {
   users,
@@ -10,6 +10,7 @@ import {
   achievements,
   settings,
 } from "../src/db/schema";
+import { ESCAPE_ROOMS } from "../src/lib/escape-rooms";
 
 function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -136,15 +137,34 @@ async function main() {
   }
   console.log(`Classes: ${classSeed.length}`);
 
+  // Remove any escape-room activities that are no longer in the catalog
+  // (the old single placeholder, or rooms that have been re-themed/renamed).
+  await db
+    .delete(activities)
+    .where(
+      and(
+        eq(activities.category, "escape-room"),
+        notInArray(activities.slug, ESCAPE_ROOMS.map((r) => r.activitySlug)),
+      ),
+    );
+
   // --- Activities ---
   const activitySeed = [
     { slug: "ai-storytelling", title: "AI Storytelling", category: "storytelling", emoji: "📖", live: true, desc: "Create an illustrated story with AI." },
     { slug: "ai-phonics", title: "AI Phonics", category: "phonics", emoji: "🔤", live: true, desc: "Match the sound to the word." },
     { slug: "ai-coding", title: "AI Code Quest", category: "coding", emoji: "💻", live: false, desc: "Build with code blocks (coming soon)." },
     { slug: "ai-game-dev", title: "AI Game Maker", category: "game-dev", emoji: "🎮", live: false, desc: "Make your own game (coming soon)." },
-    { slug: "ai-escape-room", title: "AI Escape Room", category: "escape-room", emoji: "🗝️", live: false, desc: "Solve puzzles to escape (coming soon)." },
+    // Sample AI Escape Rooms — one activity per playable room (see src/lib/escape-rooms.ts).
+    ...ESCAPE_ROOMS.map((r) => ({
+      slug: r.activitySlug,
+      title: r.title,
+      category: "escape-room" as const,
+      emoji: r.emoji,
+      live: true,
+      desc: r.tagline,
+    })),
     { slug: "free-games", title: "Brain Arcade", category: "free-games", emoji: "🕹️", live: false, desc: "Free fun games (coming soon)." },
-  ] as const;
+  ];
   for (let i = 0; i < activitySeed.length; i++) {
     const a = activitySeed[i];
     const [exists] = await db.select().from(activities).where(eq(activities.slug, a.slug)).limit(1);
