@@ -65,6 +65,20 @@ export type EscapeRoomPuzzle =
       learn: string;
     };
 
+/**
+ * A clue a station hands out the moment its puzzle is solved. Lets a room chain
+ * its puzzles together instead of being four unrelated quizzes.
+ *  - `word`  — unlocks a target in another station's word search. It surfaces
+ *    only as a picture clue (`emoji`) — never the spelled-out word — so the
+ *    player still has to work out what to hunt for.
+ *  - `exitDigit` — contributes one digit to the room's exit keypad code. The
+ *    digit is something the player just discovered here (a count, a number of
+ *    steps), so the code feels earned rather than handed out.
+ */
+export type StationClue =
+  | { kind: "word"; to: string; word: string; emoji: string }
+  | { kind: "exitDigit"; value: string };
+
 /** A clickable object in the room that opens a puzzle. */
 export type Station = {
   id: string;
@@ -74,6 +88,8 @@ export type Station = {
   /** Position in the scene, 0–100 (% from left / top). */
   x: number;
   y: number;
+  /** Clues revealed once this station's puzzle is solved (see StationClue). */
+  provides?: StationClue[];
   puzzle: EscapeRoomPuzzle;
 };
 
@@ -149,7 +165,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     ],
     character: "🧑‍🚀",
     intro:
-      "Beep boop! You're exploring Professor Pixel's Robot Lab when the door clicks shut. Walk up to each machine, solve its puzzle, and power up the exit!",
+      "Beep boop! You're exploring Professor Pixel's Robot Lab when the door clicks shut. The exit has a number lock. Solve the machines — each one shows you a number — then key the code into the door to escape!",
     outro: "The exit hums to life and slides open! The robot gives you a high-five. 🙌",
     stations: [
       {
@@ -158,14 +174,20 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         label: "Control Panel",
         x: 16,
         y: 30,
+        // Counting the robots gives the first exit digit (4), and lights up a
+        // picture clue on the poster's word search.
+        provides: [
+          { kind: "exitDigit", value: "4" },
+          { kind: "word", to: "poster", word: "ROBOT", emoji: "🤖" },
+        ],
         puzzle: {
           kind: "mcq",
-          emoji: "🔤",
-          prompt: "The screen asks: what do the letters in 'AI' stand for?",
-          options: ["Artificial Intelligence", "Apple Ice-cream", "Amazing Internet"],
-          answerIndex: 0,
-          hint: "It means a clever, thinking machine.",
-          learn: "AI stands for Artificial Intelligence — computers that learn and make choices, a bit like a brain!",
+          emoji: "🤖",
+          prompt: "The panel flashes a row of robots: 🤖 🤖 🤖 🤖 — how many is the AI counting?",
+          options: ["3", "4", "5"],
+          answerIndex: 1,
+          hint: "Touch each robot as you count along the row.",
+          learn: "Great counting! 🤖 The word ROBOT lights up on the poster, and the panel tucks your number away for the door.",
         },
       },
       {
@@ -174,33 +196,23 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         label: "Robot Helper",
         x: 45,
         y: 22,
+        // The 3 ordering steps give the second exit digit (3), and light up a
+        // picture clue on the poster.
+        provides: [
+          { kind: "exitDigit", value: "3" },
+          { kind: "word", to: "poster", word: "LEARN", emoji: "📚" },
+        ],
         puzzle: {
           kind: "order",
           emoji: "🐱",
-          prompt: "The robot is learning. Tap the steps in the right order:",
+          prompt: "Teach the robot to spot cats. Tap the 3 steps in the right order:",
           items: [
             "Show the robot lots of cat photos",
             "The robot spots the pattern",
             "The robot guesses 'cat!' on a new photo",
           ],
-          hint: "First it sees, then it thinks, then it answers.",
-          learn: "This is called machine learning — AI gets smart by studying lots of examples!",
-        },
-      },
-      {
-        id: "keypad",
-        emoji: "🔢",
-        label: "Door Keypad",
-        x: 70,
-        y: 32,
-        puzzle: {
-          kind: "code",
-          emoji: "🔢",
-          prompt: "The keypad loves number patterns. What number comes next?",
-          clue: "2, 4, 6, 8, ___",
-          answer: "10",
-          hint: "Count up by twos!",
-          learn: "Spotting patterns is a superpower that both you and AI share. 🌟",
+          hint: "First it looks, then it thinks, then it answers.",
+          learn: "That's how machines learn — from lots of examples! 📚 The word LEARN lights up on the poster, and the robot remembers your number for the door.",
         },
       },
       {
@@ -209,14 +221,16 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         label: "Word Poster",
         x: 40,
         y: 54,
+        // Finding the 2 lit-up words gives the final exit digit (2).
+        provides: [{ kind: "exitDigit", value: "2" }],
         puzzle: {
           kind: "wordsearch",
           emoji: "🔎",
-          prompt: "Find the three robot words hidden in the grid:",
-          words: ["ROBOT", "CODE", "LEARN"],
+          prompt: "Two pictures lit up on this poster. Work out each word and find it in the grid:",
+          words: ["ROBOT", "LEARN"],
           size: 8,
-          hint: "Look across, down and diagonally.",
-          learn: "Robots run on CODE, and the best ones can LEARN — just like you!",
+          hint: "Words can run across, down or diagonally.",
+          learn: "You found ROBOT and LEARN! The poster reveals its number — now you've collected the whole door code. 🔢",
         },
       },
     ],

@@ -28,6 +28,10 @@ RUN addgroup -S app \
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
+# One-time, idempotent schema bootstrap (CREATE TABLE IF NOT EXISTS) so newer
+# portal tables self-create on deploy. Uses `pg` from the standalone bundle and
+# never blocks boot on failure.
+COPY --from=builder /app/scripts/ensure-portal-schema.cjs ./ensure-portal-schema.cjs
 USER app
 EXPOSE 3000
-CMD ["node", "server.js"]
+CMD ["sh", "-c", "node ensure-portal-schema.cjs && node server.js"]
