@@ -8,6 +8,13 @@
       "when": 1780772643230,
       "tag": "0000_init_ai_kids",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1780909589384,
+      "tag": "0001_add_escape_sessions",
+      "breakpoints": true
     }
   ]
 }

@@ -508,3 +508,63 @@ export const parentChildrenRelations = relations(parentChildren, ({ one }) => ({
     references: [users.id],
   }),
 }));
+
+// --- Co-op escape-room sessions (multiplayer) ---
+// A shared escape-room game several learners can join with a short code and
+// solve together. Progress (which stations are solved + team points) lives on
+// the session row; players are tracked for presence + final scoring.
+export const escapeSessions = pgTable(
+  "escape_sessions",
+  {
+    id: serial("id").primaryKey(),
+    code: varchar("code", { length: 12 }).notNull().unique(),
+    roomSlug: varchar("room_slug", { length: 255 }).notNull(),
+    hostId: integer("host_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 16 }).notNull().default("lobby"), // lobby | playing | escaped
+    solved: jsonb("solved").notNull().default([]), // string[] of solved station ids
+    points: integer("points").notNull().default(0), // shared team points
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [index("escape_sessions_code_idx").on(t.code)],
+);
+
+export const escapeSessionPlayers = pgTable(
+  "escape_session_players",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => escapeSessions.id, { onDelete: "cascade" }),
+    learnerId: integer("learner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    avatar: varchar("avatar", { length: 16 }),
+    atStation: varchar("at_station", { length: 64 }), // presence: object the kid is at
+    joinedAt: timestamp("joined_at").defaultNow().notNull(),
+    lastSeen: timestamp("last_seen").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("escape_session_players_uq").on(t.sessionId, t.learnerId),
+    index("escape_session_players_session_idx").on(t.sessionId),
+  ],
+);
+
+export const escapeSessionsRelations = relations(escapeSessions, ({ one, many }) => ({
+  host: one(users, { fields: [escapeSessions.hostId], references: [users.id] }),
+  players: many(escapeSessionPlayers),
+}));
+
+export const escapeSessionPlayersRelations = relations(escapeSessionPlayers, ({ one }) => ({
+  session: one(escapeSessions, {
+    fields: [escapeSessionPlayers.sessionId],
+    references: [escapeSessions.id],
+  }),
+  learner: one(users, {
+    fields: [escapeSessionPlayers.learnerId],
+    references: [users.id],
+  }),
+}));
