@@ -8,7 +8,7 @@
  */
 import { db } from "@/db";
 import { escapeSessions, escapeSessionPlayers, users } from "@/db/schema";
-import { and, eq, gt, sql } from "drizzle-orm";
+import { and, eq, gt, lt, notExists, or, sql } from "drizzle-orm";
 import { getEscapeRoom } from "./escape-rooms";
 
 /** Players whose last heartbeat is older than this are treated as "left". */
@@ -16,10 +16,20 @@ export const ACTIVE_MS = 30_000;
 export const POINTS_FIRST_TRY = 10;
 export const POINTS_WITH_HELP = 6;
 
+/** Keep a finished game's row this long so teammates' polls can show the result. */
+export const ESCAPED_GRACE_MS = 10 * 60_000;
+/** A session with no player seen within this window is treated as abandoned. */
+export const ABANDONED_MS = 60 * 60_000;
+
 // Short, kid-friendly, unambiguous code words (no easily-confused letters).
+// A bigger list widens the code space (× 90 numbers) so codes don't run out.
 const CODE_WORDS = [
   "LION", "STAR", "KITE", "MOON", "FROG", "BEAR", "DUCK", "MINT",
   "NOVA", "PUMA", "JADE", "RUBY", "WAVE", "PALM", "KOALA", "TIGER",
+  "PANDA", "ZEBRA", "OTTER", "ROBOT", "COMET", "CLOUD", "MANGO", "LEMON",
+  "OLIVE", "CORAL", "PEARL", "FLAME", "STORM", "BLOOM", "MAPLE", "CEDAR",
+  "FALCON", "EAGLE", "SHARK", "WHALE", "GECKO", "LLAMA", "BISON", "RHINO",
+  "ORBIT", "PRISM", "DELTA", "RIVER", "MEADOW", "PEBBLE", "BREEZE", "SUNNY",
 ];
 
 export function generateCode(): string {
@@ -57,6 +67,40 @@ export async function getSessionByCode(code: string): Promise<EscapeSessionRow |
     .where(eq(escapeSessions.code, code.trim().toUpperCase()))
     .limit(1);
   return s ?? null;
+}
+
+/**
+ * Free up codes by deleting sessions that are safe to forget: finished games
+ * past a short grace window, and any session with no active player in a while
+ * (abandoned lobbies/games). Player rows cascade. Best-effort — never throws.
+ *
+ * Presence (`lastSeen`) drives the abandoned check rather than the session's
+ * `updatedAt`, because `updatedAt` only advances on solves/start/finish — an
+ * active game where nobody has solved anything yet would otherwise look stale.
+ */
+export async function cleanupStaleSessions(): Promise<void> {
+  const escapedCutoff = new Date(Date.now() - ESCAPED_GRACE_MS);
+  const abandonedCutoff = new Date(Date.now() - ABANDONED_MS);
+  try {
+    await db.delete(escapeSessions).where(
+      or(
+        and(eq(escapeSessions.status, "escaped"), lt(escapeSessions.updatedAt, escapedCutoff)),
+        notExists(
+          db
+            .select({ one: sql`1` })
+            .from(escapeSessionPlayers)
+            .where(
+              and(
+                eq(escapeSessionPlayers.sessionId, escapeSessions.id),
+                gt(escapeSessionPlayers.lastSeen, abandonedCutoff),
+              ),
+            ),
+        ),
+      ),
+    );
+  } catch {
+    /* best-effort cleanup — a failure here must not block creating a room */
+  }
 }
 
 /**

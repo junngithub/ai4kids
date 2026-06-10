@@ -187,6 +187,10 @@ export type RoomCipherExit = {
   revealLetters: string;
   /** Station id whose solve reveals the coded message to decrypt. */
   revealCoded: string;
+  /** Themed banner copy while solving (the `N/total` count is appended). */
+  progressHint?: string;
+  /** Themed banner copy once every station is solved. */
+  readyHint?: string;
 };
 
 /**
@@ -206,6 +210,10 @@ export type RoomUnscrambleExit = {
     emoji: string;
     core: string;
   }[];
+  /** Themed banner copy while solving (the `N/total` count is appended). */
+  progressHint?: string;
+  /** Themed banner copy once every station is solved. */
+  readyHint?: string;
 };
 
 /** A clickable object in the room that opens a puzzle. */
@@ -373,7 +381,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         puzzle: {
           kind: "wordsearch",
           emoji: "🔎",
-          prompt: "Three pictures will light up on this display. Find all three words — they all cross at one square!",
+          prompt: "Three words will light up on this display. Find all three words — they all cross at one square!",
           words: ["ROBOT", "LEARN", "GEAR"],
           // Deterministic grid: ROBOT (→), LEARN (↓) and GEAR (↘) all share the
           // R at row 4, col 3 (0-indexed) → exit code Column 4, Row 5.
@@ -424,6 +432,8 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     // The suit door: each core (station) reveals one scrambled word to crack.
     exit: {
       kind: "unscramble",
+      progressHint: "⚡ Charge the hero cores to power the suit",
+      readyHint: "🦸 All cores charged — open the suit and unscramble the words!",
       words: [
         { answer: "KIND", scrambled: "DNIK", reveal: "kindness", emoji: "💚", core: "Kindness Core" },
         { answer: "TRUE", scrambled: "ETUR", reveal: "honesty", emoji: "💙", core: "Honesty Core" },
@@ -556,6 +566,8 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
       revealSymbols: "circuit", // circuit connector → decoder symbols
       revealLetters: "bins", // recycling bins → decoder letters
       revealCoded: "panel", // solar panel → the coded message
+      progressHint: "🔌 Fix the machines to power the door's decoder",
+      readyHint: "🔣 All powered up — open the door and crack the decoder code!",
     },
     stations: [
       {
@@ -602,7 +614,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         puzzle: {
           kind: "circuit",
           emoji: "🔌",
-          prompt: "The power's out! Tap the pipes to spin them and connect ⚡ to the 💡.",
+          prompt: "The power's out! Tap the tiles to spin them and connect ⚡ to the 💡.",
           // 3×3 of pipe tiles; rotate the path tiles to link start → end.
           tiles: [
             [
@@ -623,7 +635,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           ],
           start: { r: 1, c: 0, from: "W" },
           end: { r: 1, c: 2, to: "E" },
-          hint: "Each tap turns a pipe a quarter-turn. Make one unbroken line from ⚡ to 💡.",
+          hint: "Each tap turns a tile. Make one unbroken line from ⚡ to 💡.",
           learn: "You fixed the circuit — clean power flows again! ⚡ The decoder's symbols light up.",
         },
       },
@@ -668,6 +680,8 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
       revealSymbols: "river", // river maze → the tablet's symbol key
       revealLetters: "timeline", // sort the eras → the tablet's letter key
       revealCoded: "merlion", // the Merlion → the coded carving itself
+      progressHint: "🪨 Light up the stone tablet's three pieces",
+      readyHint: "🔣 Tablet ready — decode the secret word to open the vault!",
     },
     stations: [
       {
@@ -754,7 +768,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     activitySlug: "escape-sg-culture",
     title: "The Festival Street Party",
     emoji: "🎉",
-    tagline: "Light the lanterns and unscramble the party words!",
+    tagline: "Fix the lights and unscramble the party words!",
     ageRange: "7–10",
     accent: "bg-bubble/15 text-bubble",
     ring: "ring-bubble/30",
@@ -774,11 +788,13 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     ],
     character: "👧",
     intro:
-      "Welcome to the Festival Street Party! The gate stays shut until the party is ready. Serve the hawker food, wire up the festival lanterns and count the parade drums — then unscramble the three party words to swing the gate open!",
-    outro: "The street erupts in music and glowing lanterns — you're a Singapore culture star! 🎉",
+      "Welcome to the Festival Street Party! The gate stays shut until the party is ready. Serve the hawker food, wire up the festival lights and count the parade drums — then unscramble the three party words to swing the gate open!",
+    outro: "The street erupts in music and glowing lights — you're a Singapore culture star! 🎉",
     // Party gate: each station reveals one scrambled party word to unscramble.
     exit: {
       kind: "unscramble",
+      progressHint: "🎉 Get the party ready to light up the three words",
+      readyHint: "🎉 Party ready — unscramble the words to swing the gate open!",
       words: [
         { answer: "SATAY", scrambled: "TAYAS", reveal: "hawker", emoji: "🍢", core: "Yummy Word" },
         { answer: "LIGHT", scrambled: "GHILT", reveal: "lights", emoji: "💡", core: "Glowing Word" },
@@ -788,21 +804,21 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     stations: [
       {
         id: "hawker",
-        emoji: "🍚",
-        label: "Hawker Stall",
+        emoji: "🍢",
+        label: "Satay Stall",
         x: 17,
         y: 30,
         puzzle: {
           kind: "order",
-          emoji: "🍗",
-          prompt: "Eat at a hawker centre! Put the steps in order:",
+          emoji: "🍢",
+          prompt: "Serve sizzling satay at your festival stall! Put the steps in order:",
           items: [
-            "Order your chicken rice",
-            "Pay with coins",
-            "Find a seat and enjoy!",
+            "Skewer the meat onto sticks",
+            "Grill it over the hot coals",
+            "Serve it up to hungry guests",
           ],
-          hint: "Order, then pay, then eat.",
-          learn: "Hawker centres serve yummy, cheap food like chicken rice and satay! 🍢 A scrambled word lights up on the gate.",
+          hint: "Skewer first, then grill, then serve.",
+          learn: "Satay is grilled meat on sticks — a hawker favourite at any festival! 🍢 A scrambled word lights up on the gate.",
         },
       },
       {
@@ -955,7 +971,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         puzzle: {
           kind: "wordsearch",
           emoji: "🔎",
-          prompt: "Three pictures will light up on the map. Find all three words — they all cross at one square!",
+          prompt: "Three words will light up on the map. Find all three words — they all cross at one square!",
           words: ["OTTER", "GARDEN", "RIVER"],
           // Deterministic grid: OTTER (→), GARDEN (↓) and RIVER (↘) all share the
           // E at row 4, col 3 (0-indexed) → exit code Column 4, Row 5.

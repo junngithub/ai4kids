@@ -2,8 +2,9 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { getPortalSession } from "@/lib/portal-session";
 import { getSessionByCode, upsertPlayer, buildState } from "@/lib/escape-session";
+import { getEscapeRoom } from "@/lib/escape-rooms";
 
-const schema = z.object({ code: z.string().min(2).max(12) });
+const schema = z.object({ code: z.string().min(2).max(12), roomSlug: z.string().min(1).optional() });
 
 export async function POST(req: Request) {
   const session = await getPortalSession();
@@ -17,6 +18,19 @@ export async function POST(req: Request) {
   if (!game) return NextResponse.json({ error: "No room with that code" }, { status: 404 });
   if (game.status === "escaped") {
     return NextResponse.json({ error: "That game has already finished" }, { status: 409 });
+  }
+  // A code belongs to the room it was created in — don't let it join a different
+  // room's scene (the client only renders the page's room).
+  if (parsed.data.roomSlug && game.roomSlug !== parsed.data.roomSlug) {
+    const other = getEscapeRoom(game.roomSlug);
+    return NextResponse.json(
+      {
+        error: other
+          ? `That code is for “${other.title}”. Open that room to join your friends.`
+          : "That code is for a different room.",
+      },
+      { status: 409 },
+    );
   }
 
   const learnerId = Number(session.id);

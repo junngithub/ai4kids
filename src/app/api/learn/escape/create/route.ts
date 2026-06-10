@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { escapeSessions } from "@/db/schema";
 import { getPortalSession } from "@/lib/portal-session";
 import { getEscapeRoom } from "@/lib/escape-rooms";
-import { generateCode, upsertPlayer, buildState } from "@/lib/escape-session";
+import { generateCode, upsertPlayer, buildState, cleanupStaleSessions } from "@/lib/escape-session";
 
 const schema = z.object({ roomSlug: z.string().min(1) });
 
@@ -20,6 +20,9 @@ export async function POST(req: Request) {
   if (!room) return NextResponse.json({ error: "Unknown room" }, { status: 404 });
 
   const learnerId = Number(session.id);
+
+  // Free up codes from finished/abandoned games before claiming a new one.
+  await cleanupStaleSessions();
 
   // Create the session with a unique code (retry a few times on collision).
   let created: typeof escapeSessions.$inferSelect | null = null;
