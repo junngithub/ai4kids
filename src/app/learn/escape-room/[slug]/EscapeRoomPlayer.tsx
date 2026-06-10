@@ -31,9 +31,17 @@ export function EscapeRoomPlayer({ room }: { room: EscapeRoom }) {
 
   return (
     <div className="mx-auto max-w-3xl">
-      <Link href="/learn" className="font-fun text-sm font-600 text-slate-400 hover:text-coral">
-        ← Back to activities
-      </Link>
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 font-fun text-sm font-600">
+        <Link href="/learn" className="text-slate-400 hover:text-coral">
+          ← Back to activities
+        </Link>
+        <span aria-hidden className="text-slate-300">
+          ·
+        </span>
+        <Link href="/learn/escape-room" className="text-slate-400 hover:text-coral">
+          🗝️ All escape rooms
+        </Link>
+      </div>
 
       {/* Room header */}
       <div className={`mt-3 flex items-center gap-4 rounded-[2rem] bg-white p-5 shadow-sm ring-1 ${room.ring}`}>
@@ -176,7 +184,10 @@ function CoopRoom({ room, onLeave }: { room: EscapeRoom; onLeave: () => void }) 
     setBusy(true);
     setErr(null);
     try {
-      const d = await api<{ code: string; state: SessionStateDTO }>("/api/learn/escape/join", { code: joinCode.trim() });
+      const d = await api<{ code: string; state: SessionStateDTO }>("/api/learn/escape/join", {
+        code: joinCode.trim(),
+        roomSlug: room.slug,
+      });
       setCode(d.code);
       setSt(d.state);
       setStage("session");
@@ -316,7 +327,7 @@ function CoopRoom({ room, onLeave }: { room: EscapeRoom; onLeave: () => void }) 
         <div className="mt-2 inline-block rounded-2xl bg-slate-900 px-8 py-3 font-mono text-4xl font-700 tracking-[0.3em] text-mint">
           {st.code}
         </div>
-        <PlayerStrip players={st.players} youId={st.you} />
+        <PlayerStrip room={room} players={st.players} youId={st.you} />
         <div className="mt-6">
           {isHost ? (
             <button
@@ -349,7 +360,7 @@ function CoopRoom({ room, onLeave }: { room: EscapeRoom; onLeave: () => void }) 
         <div className="mt-4 inline-block rounded-full bg-mint/20 px-5 py-1.5 font-fun font-700 text-emerald-600">
           +{score} points each!
         </div>
-        <PlayerStrip players={st.players} youId={st.you} />
+        <PlayerStrip room={room} players={st.players} youId={st.you} />
         <div className="mt-6 flex flex-wrap justify-center gap-3">
           <button onClick={onLeave} className="rounded-full bg-coral px-6 py-3 font-fun font-700 text-white shadow">
             Back to start 🔁
@@ -369,6 +380,7 @@ function CoopRoom({ room, onLeave }: { room: EscapeRoom; onLeave: () => void }) 
       solvedIds={st.solved}
       onSolve={onSolve}
       onEscape={onEscape}
+      isCoop
       others={st.players.filter((p) => p.learnerId !== st.you)}
       onPresence={onPresence}
     />
@@ -376,21 +388,26 @@ function CoopRoom({ room, onLeave }: { room: EscapeRoom; onLeave: () => void }) 
 }
 
 /** A horizontal row of player avatars (lobby + results). */
-function PlayerStrip({ players, youId }: { players: PlayerDTO[]; youId: number }) {
+function PlayerStrip({ room, players, youId }: { room: EscapeRoom; players: PlayerDTO[]; youId: number }) {
   return (
     <div className="mt-5 flex flex-wrap justify-center gap-3">
-      {players.map((p) => (
-        <div
-          key={p.learnerId}
-          className="flex items-center gap-2 rounded-full bg-amber-50 px-3 py-1.5 ring-1 ring-amber-100"
-        >
-          <span className="text-2xl">{p.avatar || "🙂"}</span>
-          <span className="font-fun text-sm font-700 text-slate-700">
-            {p.learnerId === youId ? "You" : p.name.split(" ")[0]}
-            {p.isHost && " 👑"}
-          </span>
-        </div>
-      ))}
+      {players.map((p) => {
+        const isYou = p.learnerId === youId;
+        return (
+          <div
+            key={p.learnerId}
+            className={`flex items-center gap-2 rounded-full px-3 py-1.5 ring-1 ${
+              isYou ? "bg-coral/15 ring-coral/40" : "bg-amber-50 ring-amber-100"
+            }`}
+          >
+            <span className="text-2xl">{room.character}</span>
+            <span className="font-fun text-sm font-700 text-slate-700">
+              {isYou ? "You" : p.name.split(" ")[0]}
+              {p.isHost && " 👑"}
+            </span>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -399,13 +416,14 @@ function PlayerStrip({ players, youId }: { players: PlayerDTO[]; youId: number }
 /* Shared room scene (used by both solo and co-op)                     */
 /* ------------------------------------------------------------------ */
 
-type ScenePlayer = Pick<PlayerDTO, "learnerId" | "name" | "avatar" | "atStation">;
+type ScenePlayer = Pick<PlayerDTO, "learnerId" | "name" | "atStation">;
 
 function RoomScene({
   room,
   solvedIds,
   onSolve,
   onEscape,
+  isCoop = false,
   others = [],
   onPresence,
 }: {
@@ -413,6 +431,8 @@ function RoomScene({
   solvedIds: string[];
   onSolve: (stationId: string, firstTry: boolean) => void;
   onEscape: () => void;
+  /** True in co-op — shows a "You" tag on the player's character. */
+  isCoop?: boolean;
   others?: ScenePlayer[];
   onPresence?: (atStation: string | null) => void;
 }) {
@@ -561,14 +581,14 @@ function RoomScene({
               ? usesCodeExit
                 ? "🔢 All solved — open the door and key in the crossing's Column & Row!"
                 : cipherExit
-                  ? "🔣 All powered up — open the door and crack the decoder code!"
+                  ? cipherExit.readyHint ?? "🔣 All set — open the door and crack the code!"
                   : unscrambleExit
-                    ? "🦸 All cores charged — open the suit and unscramble the words!"
+                    ? unscrambleExit.readyHint ?? "🔤 All revealed — open the door and unscramble the words!"
                     : "🔓 All done — head to the door!"
               : cipherExit
-                ? `🔌 Fix the machines to power the door's decoder  ·  ${solvedIds.length}/${total}`
+                ? `${cipherExit.progressHint ?? "🔣 Solve the puzzles to power up the lock"}  ·  ${solvedIds.length}/${total}`
                 : unscrambleExit
-                  ? `⚡ Charge the hero cores to power the suit  ·  ${solvedIds.length}/${total}`
+                  ? `${unscrambleExit.progressHint ?? "🔤 Solve the puzzles to reveal the words"}  ·  ${solvedIds.length}/${total}`
                   : `Tap an object to solve its puzzle 🔍  ·  ${solvedIds.length}/${total}`}
           </div>
         </div>
@@ -650,7 +670,7 @@ function RoomScene({
               className="pointer-events-none absolute z-[9] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center transition-all ease-in-out"
               style={{ left: `${pos.x}%`, top: `${pos.y}%`, transitionDuration: `${WALK_MS}ms` }}
             >
-              <span className="text-4xl opacity-90 drop-shadow-md sm:text-5xl">{p.avatar || "🙂"}</span>
+              <span className="text-4xl opacity-90 drop-shadow-md sm:text-5xl">{room.character}</span>
               <span className="-mt-1 rounded-full bg-white/80 px-2 py-0.5 font-fun text-[10px] font-700 text-slate-600 shadow-sm">
                 {p.name.split(" ")[0]}
               </span>
@@ -675,6 +695,12 @@ function RoomScene({
             }`}
             aria-hidden
           />
+          {/* "You" tag — only in co-op */}
+          {isCoop && (
+            <span className="mx-auto mt-0.5 block w-fit whitespace-nowrap rounded-full bg-coral px-2 py-0.5 font-fun text-[10px] font-700 text-white shadow">
+              You
+            </span>
+          )}
         </div>
       </div>
 
@@ -842,6 +868,9 @@ function EscapedCard({
         <button onClick={onReplay} className="rounded-full bg-coral px-6 py-3 font-fun font-700 text-white shadow">
           Play again 🔁
         </button>
+        <Link href="/learn/escape-room" className="rounded-full bg-grape px-6 py-3 font-fun font-700 text-white shadow">
+          Try another room 🗝️
+        </Link>
         <Link href="/learn" className="rounded-full bg-slate-100 px-6 py-3 font-fun font-600 text-slate-600">
           All activities
         </Link>
@@ -1564,13 +1593,28 @@ function CircuitPuzzle({
 
   const bar = (on: boolean) => (on ? "bg-amber-400" : "bg-slate-300");
 
+  // A short stub on a tile's outer edge, marking where power enters (start) or
+  // leaves (end) the grid — so direction is clear without flanking icons.
+  const edgeNub = (edge: Dir, color: string) => {
+    const base = `absolute rounded-full ${color}`;
+    switch (edge) {
+      case "N":
+        return <span className={`${base} left-1/2 -top-1 h-2 w-2 -translate-x-1/2`} />;
+      case "S":
+        return <span className={`${base} left-1/2 -bottom-1 h-2 w-2 -translate-x-1/2`} />;
+      case "E":
+        return <span className={`${base} top-1/2 -right-1 h-2 w-2 -translate-y-1/2`} />;
+      case "W":
+        return <span className={`${base} top-1/2 -left-1 h-2 w-2 -translate-y-1/2`} />;
+    }
+  };
+
   return (
     <div className="mt-4 text-center">
       {puzzle.emoji && <div className="text-5xl">{puzzle.emoji}</div>}
       <p className="mt-3 font-fun text-lg font-700 text-slate-800">{puzzle.prompt}</p>
 
-      <div className="mt-4 flex items-center justify-center gap-1">
-        <span className={`text-2xl transition ${lit ? "" : "animate-pulse"}`}>⚡</span>
+      <div className="mt-4 flex items-center justify-center">
         <div
           className="grid gap-1 rounded-2xl bg-slate-900 p-2"
           style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
@@ -1586,8 +1630,16 @@ function CircuitPuzzle({
                   key={`${r},${c}`}
                   onClick={() => tap(r, c)}
                   disabled={solved}
-                  aria-label={`Pipe ${r + 1},${c + 1}`}
-                  className="relative h-12 w-12 rounded-md bg-slate-800 ring-1 ring-slate-700 transition hover:bg-slate-700 disabled:cursor-default sm:h-14 sm:w-14"
+                  aria-label={`Pipe ${r + 1},${c + 1}${isStart ? " (power source)" : isEnd ? " (lamp)" : ""}`}
+                  className={`relative h-12 w-12 rounded-md ring-1 transition disabled:cursor-default sm:h-14 sm:w-14 ${
+                    isStart
+                      ? "bg-amber-500/25 ring-amber-400/70"
+                      : isEnd
+                        ? lit
+                          ? "bg-amber-300/30 ring-amber-300/70"
+                          : "bg-slate-700/60 ring-slate-500"
+                        : "bg-slate-800 ring-slate-700 hover:bg-slate-700"
+                  }`}
                 >
                   {/* centre hub */}
                   <span
@@ -1605,18 +1657,27 @@ function CircuitPuzzle({
                   {sides.includes("W") && (
                     <span className={`absolute left-0 top-1/2 h-2 w-1/2 -translate-y-1/2 rounded-full ${bar(on)}`} />
                   )}
-                  {isStart && <span className="absolute -left-0.5 -top-0.5 text-xs">⚡</span>}
-                  {isEnd && <span className="absolute -right-0.5 -top-0.5 text-xs">💡</span>}
+                  {isStart && edgeNub(puzzle.start.from, "bg-amber-400")}
+                  {isEnd && edgeNub(puzzle.end.to, lit ? "bg-amber-400" : "bg-slate-400")}
+                  {isStart && (
+                    <span className="absolute -left-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[10px] shadow ring-1 ring-amber-400/70">
+                      ⚡
+                    </span>
+                  )}
+                  {isEnd && (
+                    <span className={`absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[10px] shadow ring-1 transition ${lit ? "ring-amber-400/70" : "ring-slate-500 grayscale"}`}>
+                      💡
+                    </span>
+                  )}
                 </button>
               );
             }),
           )}
         </div>
-        <span className={`text-2xl transition ${lit ? "animate-bounce" : "opacity-40"}`}>💡</span>
       </div>
 
       <p className="mt-3 font-round text-xs text-slate-400">
-        {lit ? "💡 Lit! Clean power is flowing." : "Tap a pipe to spin it. Link ⚡ all the way to 💡."}
+        {lit ? "💡 Lit! Clean power is flowing." : "Tap a tile to spin it. Connect the ⚡ source to the 💡 lamp."}
       </p>
     </div>
   );
