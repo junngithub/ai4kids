@@ -14,6 +14,8 @@
  * to a route at /learn/escape-room/<slug>.
  */
 
+import { HONESTY_MAZES, HISTORY_MAZES, type MazeVariant } from "./maze-pool";
+
 // TODO: Make the rooms more engaging and less repetitive. Every room currently
 // follows the same 4-station mcq → order → code → wordsearch template with the
 // same object positions. Ideas: vary the number/layout of stations per room;
@@ -126,10 +128,9 @@ export type EscapeRoomPuzzle =
       kind: "maze";
       prompt: string;
       emoji?: string;
-      /** Rows of equal length: '#' wall, '.' path, 'S' start, 'G' goal. */
-      grid: string[];
-      /** Scenario signposts shown when the hero stands on a given cell. */
-      signs?: { at: [number, number]; text: string }[];
+      /** Pool of maze variants (grid + on-path signs); one is chosen at random
+       *  each play — see scripts/gen-mazes.cjs and src/lib/maze-pool.ts. */
+      variants: MazeVariant[];
       /** Emoji drawn on the goal cell (default 💙). */
       goalEmoji?: string;
       /** Walking-hint caption under the maze (default mentions the honest path). */
@@ -325,7 +326,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           clue: "⚙️ 🤖 🤖 🛰️ 🤖 🪐 🤖 ✨ 🔋 🤖 ⚙️ 🤖",
           answer: "6",
           hint: "Touch each 🤖 as you count — skip the gears, planets and other machines.",
-          learn: "Great counting! 🤖 The word ROBOT lights up on the word display — go hunt for it!",
+          learn: "Great counting! 🤖 The word ROBOT will light up on the word display — go hunt for it!",
         },
       },
       {
@@ -346,7 +347,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
             "The robot guesses 'cat!' on a new photo",
           ],
           hint: "First it looks, then it thinks, then it answers.",
-          learn: "That's how machines learn — from lots of examples! 📚 The word LEARN lights up on the display.",
+          learn: "That's how machines learn — from lots of examples! 📚 The word LEARN will light up on the display.",
         },
       },
       {
@@ -369,7 +370,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           coded: ["⚙️", "🔋", "🤖", "🔧"],
           answer: "GEAR",
           hint: "Find each message symbol in the key and jot its letter — they're spread all over.",
-          learn: "You cracked the code! ⚙️ The secret word GEAR lights up on the display.",
+          learn: "You cracked the code! ⚙️ The word GEAR will light up on the display.",
         },
       },
       {
@@ -427,13 +428,13 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     ],
     character: "🦸",
     intro:
-      "The hero suit is out of power! It needs three cores — Kindness, Honesty and Fairness. Charge up each core, then use them to unscramble the suit's secret words and power the door open!",
-    outro: "The suit lights up and zooms you out the door — you're a true superhero! 🦸",
+      "The hero suit is out of power! It needs three cores — Kindness, Honesty and Fairness. Charge up each core, then use them to reveal the suit's secret passwords and power the door open!",
+    outro: "The suit lights up and wearing it, you zoom out the door — you're a true superhero! 🦸",
     // The suit door: each core (station) reveals one scrambled word to crack.
     exit: {
       kind: "unscramble",
       progressHint: "⚡ Charge the hero cores to power the suit",
-      readyHint: "🦸 All cores charged — open the suit and unscramble the words!",
+      readyHint: "🦸 All cores charged — open the suit and reveal the words!",
       words: [
         { answer: "KIND", scrambled: "DNIK", reveal: "kindness", emoji: "💚", core: "Kindness Core" },
         { answer: "TRUE", scrambled: "ETUR", reveal: "honesty", emoji: "💙", core: "Honesty Core" },
@@ -450,7 +451,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         puzzle: {
           kind: "sort",
           emoji: "💚",
-          prompt: "Drop each thing someone said into the correct bin to charge the Kindness Core.",
+          prompt: "Drop each sentence into the correct bin to charge the Kindness Core.",
           bins: [
             { label: "Kind", emoji: "💚" },
             { label: "Mean", emoji: "💢" },
@@ -477,33 +478,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           kind: "maze",
           emoji: "💙",
           prompt: "Find the honest path to the core. At each fork, the truthful choice goes forward — a lie is a dead end!",
-          grid: [
-            "###########",
-            "#S..#.....#",
-            "###.#####.#",
-            "#.#.#.....#",
-            "#.#.#.###.#",
-            "#...#.#...#",
-            "#.###.#.###",
-            "#...#.#.#G#",
-            "###.#.#.#.#",
-            "#.....#...#",
-            "###########",
-          ],
-          signs: [
-            {
-              at: [5, 1],
-              text: "🤔 You forgot your homework. ⬆️ up: 'Pretend you lost it' (a lie). ⬇️ down: 'Tell the teacher the truth'.",
-            },
-            {
-              at: [3, 9],
-              text: "🤔 You knocked over a plant. ⬆️ up: 'Blame the cat' (a lie). ⬇️ down: 'Own up and help clean it'.",
-            },
-            {
-              at: [9, 3],
-              text: "🤔 You found a friend's lost pen. ⬅️ left: 'Keep it secretly' (a lie). ➡️ right: 'Give it back honestly'.",
-            },
-          ],
+          variants: HONESTY_MAZES,
           hint: "Read each signpost — the honest choice is the way forward.",
           learn: "Telling the truth, even when it's hard, is what honesty means — Honesty Core charged! 💙",
         },
@@ -517,11 +492,11 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         puzzle: {
           kind: "fair",
           emoji: "💛",
-          prompt: "Share the apples so every animal gets exactly the same. Be fair!",
-          animals: ["🐶", "🐱", "🐰"],
-          treat: "🍎",
+          prompt: "Share the food so every animal gets exactly the same. Be fair!",
+          animals: ["🐶", "🐱", "🦊"],
+          treat: "🍖",
           total: 9,
-          hint: "Nine apples shared between three friends — how many does each one get?",
+          hint: "Nine pieces of food shared between three friends — how many does each one get?",
           learn: "Sharing equally so everyone gets the same is what being fair means — Fairness Core charged! 💛",
         },
       },
@@ -716,9 +691,9 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           ],
           items: [
             { text: "Kampong house on stilts", bin: 0 },
-            { text: "Riding the MRT train", bin: 1 },
+            { text: "The MRT train", bin: 1 },
             { text: "Trishaw on the street", bin: 0 },
-            { text: "Tapping a phone to pay", bin: 1 },
+            { text: "Mobile phone", bin: 1 },
             { text: "Sampan boat on the river", bin: 0 },
             { text: "Tall glass skyscrapers", bin: 1 },
           ],
@@ -739,24 +714,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           goalEmoji: "🗝️",
           caption: "Use the arrows to find your way to 🗝️ through the old lanes.",
           wonText: "🗝️ You found the vault key down the river lanes!",
-          grid: [
-            "###########",
-            "#S#.....#.#",
-            "#.###.#.#.#",
-            "#.#...#.#.#",
-            "#.#.###.#.#",
-            "#.#...#.#.#",
-            "#.###.#.#.#",
-            "#.....#...#",
-            "#########.#",
-            "#G........#",
-            "###########",
-          ],
-          signs: [
-            { at: [3, 3], text: "🏘️ Old kampong houses once stood on stilts along here." },
-            { at: [7, 4], text: "🚢 The busy harbour traded spices, silk and tin." },
-            { at: [2, 7], text: "🏛️ Grand riverside buildings from long ago line the bend." },
-          ],
+          variants: HISTORY_MAZES,
           hint: "Only the lanes next to you light up — explore carefully to reach 🗝️.",
           learn: "You traced the old Singapore River to the vault key! 🗝️ The tablet's symbol key lights up.",
         },
@@ -904,7 +862,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
       {
         id: "river",
         emoji: "🦦",
-        label: "Otter River",
+        label: "Lazy River",
         x: 16,
         y: 30,
         // Lights up OTTER (as a 🦦 picture clue) on the trail map.
@@ -916,7 +874,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           options: ["Otters", "Penguins", "Polar bears"],
           answerIndex: 0,
           hint: "They're furry and love to splash together.",
-          learn: "Singapore's smooth-coated otters live in families! 🦦 The word OTTER lights up on the trail map.",
+          learn: "Singapore's smooth-coated otters live in families! 🦦 The word OTTER will light up on the trail map.",
         },
       },
       {
@@ -937,7 +895,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
             "It grows into a tall tree",
           ],
           hint: "Seed first, then a shoot, then a tree.",
-          learn: "Trees make Singapore a green Garden City! 🌳 The word GARDEN lights up on the trail map.",
+          learn: "Trees make Singapore a green Garden City! 🌳 The word GARDEN will light up on the trail map.",
         },
       },
       {
@@ -959,7 +917,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
           coded: ["🦦", "🐟", "🦜", "🌱", "🦦"], // R I V E R
           answer: "RIVER",
           hint: "Find each message symbol in the key and jot its letter — they're spread all over.",
-          learn: "You cracked the ranger's code! 🌊 The word RIVER lights up on the trail map.",
+          learn: "You cracked the ranger's code! 🌊 The word RIVER will light up on the trail map.",
         },
       },
       {

@@ -22,6 +22,16 @@ const POLL_MS = 1300;
 /** Where the character idles (x/y as % of the scene), bottom-left of the room. */
 const IDLE_POS = { x: 10, y: 78 };
 
+/**
+ * The floor (ground plane) starts at this % from the top; scenery sits above it.
+ * Stations' authored y (~22 back … ~56 front) is remapped onto the floor band
+ * below the horizon so every station's base lands clearly on the floor, not at
+ * the horizon seam. Applied to the marker, walk target, and co-op presence so
+ * everything stays aligned.
+ */
+const FLOOR_TOP = 44;
+const groundedY = (y: number) => 48 + (y - 22) * 0.65;
+
 const clamp = (n: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, n));
 
 type Mode = null | "solo" | "coop";
@@ -522,7 +532,7 @@ function RoomScene({
     // (and re-check the number it gave you for the door).
     if (openId || walkingTo) return;
     setWalkingTo(station.id);
-    walkTo(station.x, station.y + 14);
+    walkTo(station.x, groundedY(station.y) + 12);
     onPresence?.(station.id);
     window.setTimeout(() => {
       setOpenId(station.id);
@@ -547,7 +557,7 @@ function RoomScene({
     // the stations); the input only unlocks once every piece is in.
     if (specialExit) {
       setWalkingTo("__door__");
-      walkTo(82, 70);
+      walkTo(82, 52);
       window.setTimeout(() => {
         setWalkingTo(null);
         setDoorOpen(true);
@@ -560,7 +570,7 @@ function RoomScene({
       return;
     }
     setWalkingTo("__door__");
-    walkTo(82, 70);
+    walkTo(82, 52);
     window.setTimeout(() => {
       setWalkingTo(null);
       // Code-exit rooms: key in the code you collected. Otherwise, just leave.
@@ -598,6 +608,7 @@ function RoomScene({
         {room.stations.map((s) => {
           const done = solvedIds.includes(s.id);
           const th = STATION_THEME[room.scene];
+          const icon = STATION_ICON[`${room.slug}:${s.id}`];
           return (
             <button
               key={s.id}
@@ -605,35 +616,42 @@ function RoomScene({
               disabled={!!openId || !!walkingTo}
               aria-label={`${s.label}${done ? " (solved — tap to review)" : ""}`}
               className="group absolute -translate-x-1/2 -translate-y-1/2 disabled:cursor-default"
-              style={{ left: `${s.x}%`, top: `${s.y}%` }}
+              style={{ left: `${s.x}%`, top: `${groundedY(s.y)}%` }}
             >
               <span className="relative flex flex-col items-center">
-                {/* themed glow halo (behind the holder via DOM order, no z-index) */}
+                {/* hover-only glow — a resting station stays grounded, not floaty */}
                 <span
                   aria-hidden
-                  className={`pointer-events-none absolute -top-2 left-1/2 h-20 w-20 -translate-x-1/2 rounded-full blur-md transition group-hover:opacity-90 ${
-                    done ? "bg-emerald-300/25" : `${th.glow} opacity-70`
+                  className={`pointer-events-none absolute top-1 left-1/2 h-14 w-14 -translate-x-1/2 rounded-full opacity-0 blur-md transition group-hover:opacity-60 ${
+                    done ? "bg-emerald-300/40" : th.glow
                   }`}
                 />
                 {/* device holder */}
-                <span className="relative">
+                <span className="relative z-10">
                   <span
-                    className={`flex h-16 w-16 items-center justify-center rounded-2xl text-4xl shadow-lg ring-2 backdrop-blur-sm transition ${
-                      done ? "bg-mint/50 ring-emerald-300" : `${th.holder} ${th.ring} group-hover:scale-110`
+                    className={`flex h-16 w-16 items-center justify-center rounded-2xl rounded-b-lg text-4xl shadow-md ring-2 backdrop-blur-sm transition ${
+                      done ? "bg-mint/50 text-emerald-600 ring-emerald-300" : `${th.holder} ${th.ring} group-hover:scale-105`
                     }`}
                   >
-                    {done ? "✅" : s.emoji}
+                    {done ? (
+                      <StationIcon name="check" className="h-9 w-9" />
+                    ) : icon ? (
+                      <StationIcon name={icon} className="h-9 w-9" />
+                    ) : (
+                      s.emoji
+                    )}
                   </span>
                   {!done && (
                     <span className="absolute -right-1 -top-1 flex h-4 w-4 animate-ping rounded-full bg-coral/60" aria-hidden />
                   )}
                 </span>
-                {/* stand connecting the object to the ground */}
-                <span aria-hidden className={`-mt-0.5 h-2.5 w-3.5 rounded-b-[3px] ${done ? "bg-emerald-400/50" : th.stand}`} />
-                {/* soft ground shadow */}
-                <span aria-hidden className="-mt-0.5 h-1.5 w-11 rounded-[50%] bg-black/25 blur-[2px]" />
+                {/* pedestal post + foot, planting the object on the floor */}
+                <span aria-hidden className={`relative z-10 -mt-1 h-3 w-7 rounded-b-md ${done ? "bg-emerald-400/70" : th.stand}`} />
+                <span aria-hidden className={`relative z-10 -mt-px h-2 w-11 rounded-[50%] ${done ? "bg-emerald-500/60" : th.stand}`} />
+                {/* contact shadow cast on the floor (no gap → reads as grounded) */}
+                <span aria-hidden className="-mt-1.5 h-3 w-14 rounded-[50%] bg-black/40 blur-[4px]" />
                 {/* label */}
-                <span className="mt-0.5 block whitespace-nowrap rounded-full bg-white/85 px-2 py-0.5 text-center font-fun text-[11px] font-700 text-slate-600 shadow-sm">
+                <span className="mt-1 block whitespace-nowrap rounded-full bg-white/85 px-2 py-0.5 text-center font-fun text-[11px] font-700 text-slate-600 shadow-sm">
                   {s.label}
                 </span>
               </span>
@@ -647,7 +665,7 @@ function RoomScene({
           onClick={tryDoor}
           disabled={!!openId || !!walkingTo}
           aria-label={allSolved ? "Open the exit door" : specialExit ? "Open the door console" : "Exit door (locked)"}
-          className="absolute bottom-[23%] right-[6%] h-24 w-16 disabled:cursor-default"
+          className="absolute bottom-[56%] right-[6%] h-24 w-14 disabled:cursor-default"
         >
           {/* label on the floor under the threshold */}
           <span className="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-white/80 px-2 py-0.5 font-fun text-[11px] font-700 text-slate-700 shadow-sm">
@@ -656,7 +674,7 @@ function RoomScene({
         </button>
 
         {doorMsg && (
-          <div className="absolute bottom-[44%] right-[3%] rounded-2xl bg-coral px-3 py-1.5 font-fun text-xs font-700 text-white shadow-lg">
+          <div className="absolute bottom-[49%] right-[5%] rounded-2xl bg-coral px-3 py-1.5 font-fun text-xs font-700 text-white shadow-lg">
             Solve every object first! 🔒
           </div>
         )}
@@ -670,7 +688,7 @@ function RoomScene({
               className="pointer-events-none absolute z-[9] flex -translate-x-1/2 -translate-y-1/2 flex-col items-center transition-all ease-in-out"
               style={{ left: `${pos.x}%`, top: `${pos.y}%`, transitionDuration: `${WALK_MS}ms` }}
             >
-              <span className="text-4xl opacity-90 drop-shadow-md sm:text-5xl">{room.character}</span>
+              <span className="text-5xl opacity-90 drop-shadow-md sm:text-6xl">{room.character}</span>
               <span className="-mt-1 rounded-full bg-white/80 px-2 py-0.5 font-fun text-[10px] font-700 text-slate-600 shadow-sm">
                 {p.name.split(" ")[0]}
               </span>
@@ -840,7 +858,7 @@ function RoomScene({
 /** Where to draw another player: near the object they're at, else idling. */
 function otherPos(room: EscapeRoom, atStation: string | null, idx: number) {
   const st = room.stations.find((s) => s.id === atStation);
-  if (st) return { x: clamp(st.x + (idx % 2 ? 8 : -8), 4, 92), y: clamp(st.y + 17, 20, 82) };
+  if (st) return { x: clamp(st.x + (idx % 2 ? 8 : -8), 4, 92), y: clamp(groundedY(st.y) + 15, 20, 82) };
   return { x: clamp(20 + ((idx * 15) % 60), 4, 92), y: 80 };
 }
 
@@ -890,20 +908,38 @@ function SceneBackdrop({ room }: { room: EscapeRoom }) {
       <div className={`absolute inset-0 bg-gradient-to-b ${room.wall}`} />
       <div className="absolute inset-0" style={wallPattern(room.pattern)} />
 
+      {/* Background scenery — lightly scaled (keeps natural proportions) so its
+          base tucks just under the floor, which hides the overlap; the floor is
+          drawn next and occludes anything below the horizon. */}
       <svg
         aria-hidden
         className="pointer-events-none absolute inset-0 h-full w-full"
         viewBox="0 0 100 100"
         preserveAspectRatio="none"
       >
-        <SceneArt scene={room.scene} />
-        <Doorway scene={room.scene} />
+        <g transform={`scale(1, ${(FLOOR_TOP + 12) / 76})`}>
+          <SceneArt scene={room.scene} />
+        </g>
       </svg>
 
-      <div className={`absolute inset-x-0 bottom-0 h-1/4 bg-gradient-to-b ${room.floor}`}>
+      {/* Round focal bodies (sun/planet/moon) as HTML circles so they stay round
+          — the stretched SVG above would squash them into ellipses. */}
+      <SceneOrbs scene={room.scene} />
+
+      <div className={`absolute inset-x-0 bottom-0 h-[56%] bg-gradient-to-b ${room.floor}`}>
         <div className="absolute inset-0" style={floorPattern(room.floorKind)} />
         <div className="absolute inset-x-0 top-0 h-0.5 bg-white/30" />
       </div>
+
+      {/* Exit doorway — a floor object, drawn on top of the floor (not under it). */}
+      <svg
+        aria-hidden
+        className="pointer-events-none absolute inset-0 h-full w-full"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+      >
+        <Doorway scene={room.scene} />
+      </svg>
     </>
   );
 }
@@ -918,27 +954,13 @@ function SceneArt({ scene }: { scene: SceneKind }) {
     case "lab":
       return (
         <>
-          <defs>
-            <radialGradient id="lab-planet" cx="35%" cy="30%" r="75%">
-              <stop offset="0%" stopColor="#a78bfa" />
-              <stop offset="100%" stopColor="#4c1d95" />
-            </radialGradient>
-          </defs>
-          {/* space viewport */}
-          <rect x="5" y="11" width="34" height="40" rx="4" fill="#0b1220" stroke="#38bdf8" strokeOpacity="0.5" strokeWidth="0.7" />
-          <circle cx="22" cy="29" r="8" fill="url(#lab-planet)" />
-          <ellipse cx="22" cy="29" rx="13" ry="3.4" fill="none" stroke="#7dd3fc" strokeOpacity="0.6" strokeWidth="0.8" />
-          {[[10, 17], [33, 19], [14, 44], [30, 42], [19, 15], [27, 22]].map(([x, y], i) => (
+          {/* starfield around the planet (the planet itself is an HTML orb) */}
+          {[[8, 16], [33, 14], [12, 36], [34, 34], [6, 26], [30, 24], [38, 20]].map(([x, y], i) => (
             <circle key={i} cx={x} cy={y} r="0.7" fill="#e0f2fe" opacity="0.85" />
           ))}
           {/* gear rings */}
           <circle cx="52" cy="20" r="7" fill="none" stroke="#38bdf8" strokeOpacity="0.22" strokeWidth="2.5" strokeDasharray="2 2.6" />
           <circle cx="61" cy="33" r="4.5" fill="none" stroke="#7dd3fc" strokeOpacity="0.2" strokeWidth="2" strokeDasharray="1.6 2" />
-          {/* conduit */}
-          <line x1="39" y1="60" x2="70" y2="60" stroke="#38bdf8" strokeOpacity="0.35" strokeWidth="0.8" />
-          {[44, 52, 60, 68].map((x) => (
-            <circle key={x} cx={x} cy="60" r="1.1" fill="#38bdf8" opacity="0.55" />
-          ))}
           {/* server racks */}
           {[[70, 16], [83, 24], [92, 20]].map(([x, y], r) => (
             <g key={r}>
@@ -956,15 +978,7 @@ function SceneArt({ scene }: { scene: SceneKind }) {
     case "hero":
       return (
         <>
-          <defs>
-            <radialGradient id="hero-moon" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#fef9c3" />
-              <stop offset="70%" stopColor="#fde68a" />
-              <stop offset="100%" stopColor="#fde68a" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <circle cx="20" cy="22" r="16" fill="url(#hero-moon)" opacity="0.7" />
-          <circle cx="20" cy="22" r="8" fill="#fef9c3" opacity="0.9" />
+          {/* moon is an HTML orb so it stays round */}
           {[[40, 12], [55, 20], [70, 10], [82, 24], [48, 30], [90, 16], [33, 34]].map(([x, y], i) => (
             <circle key={i} cx={x} cy={y} r={i % 2 ? 0.9 : 0.6} fill="#fff" opacity="0.8" />
           ))}
@@ -989,46 +1003,31 @@ function SceneArt({ scene }: { scene: SceneKind }) {
     case "eco":
       return (
         <>
-          <defs>
-            <radialGradient id="eco-sun" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#fef08a" />
-              <stop offset="100%" stopColor="#fde68a" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <circle cx="84" cy="16" r="16" fill="url(#eco-sun)" />
-          <circle cx="84" cy="16" r="6.5" fill="#fde047" />
-          {Array.from({ length: 8 }).map((_, i) => {
-            const a = (i * Math.PI) / 4;
-            return (
-              <line key={i} x1={84 + Math.cos(a) * 9} y1={16 + Math.sin(a) * 9} x2={84 + Math.cos(a) * 12} y2={16 + Math.sin(a) * 12} stroke="#fde047" strokeWidth="0.9" strokeLinecap="round" />
-            );
-          })}
-          {/* hills */}
-          <path d="M0 74 Q 30 50 60 66 T 100 60 L100 74 Z" fill="#34d399" opacity="0.55" />
-          <path d="M0 74 Q 25 60 55 70 T 100 68 L100 74 Z" fill="#059669" opacity="0.55" />
+          {/* sun is an HTML orb so it stays round */}
+          
           {/* wind turbine */}
-          <line x1="50" y1="74" x2="50" y2="40" stroke="#e2e8f0" strokeWidth="1.2" />
-          <circle cx="50" cy="40" r="1.6" fill="#475569" />
+          <line x1="50" y1="74" x2="50" y2="25" stroke="#e2e8f0" strokeWidth="1.2" />
+          <circle cx="50" cy="25" r="1.6" fill="#475569" />
           {[0, 120, 240].map((deg) => (
-            <line key={deg} x1="50" y1="40" x2={50 + Math.cos((deg * Math.PI) / 180) * 11} y2={40 + Math.sin((deg * Math.PI) / 180) * 11} stroke="#e2e8f0" strokeWidth="1.8" strokeLinecap="round" />
+            <line key={deg} x1="50" y1="25" x2={50 + Math.cos((deg * Math.PI) / 180) * 11} y2={25 + Math.sin((deg * Math.PI) / 180) * 11} stroke="#e2e8f0" strokeWidth="1.8" strokeLinecap="round" />
           ))}
           {/* solar panels */}
           <g opacity="0.9">
             {[6, 19].map((x) => (
               <g key={x}>
-                <line x1={x + 5} y1="74" x2={x + 5} y2="66" stroke="#64748b" strokeWidth="1" />
-                <polygon points={`${x},64 ${x + 10},60 ${x + 12},66 ${x + 2},70`} fill="#1e3a8a" stroke="#3b82f6" strokeWidth="0.4" />
-                <line x1={x + 3.5} y1="62.5" x2={x + 5.5} y2="68" stroke="#3b82f6" strokeWidth="0.4" />
-                <line x1={x + 7} y1="61" x2={x + 9} y2="66.5" stroke="#3b82f6" strokeWidth="0.4" />
+                <line x1={x + 5} y1="60" x2={x + 5} y2="52" stroke="#64748b" strokeWidth="1" />
+                <polygon points={`${x},50 ${x + 10},46 ${x + 12},52 ${x + 2},56`} fill="#1e3a8a" stroke="#3b82f6" strokeWidth="0.4" />
+                <line x1={x + 3.5} y1="48.5" x2={x + 5.5} y2="54" stroke="#3b82f6" strokeWidth="0.4" />
+                <line x1={x + 7} y1="47" x2={x + 9} y2="52.5" stroke="#3b82f6" strokeWidth="0.4" />
               </g>
             ))}
           </g>
           {/* recycling tanks */}
-          {[[88, 9], [76, 7]].map(([x, w], i) => (
+          {[[60, 9], [70, 7]].map(([x, w], i) => (
             <g key={i}>
-              <rect x={x} y={52} width={w} height="22" rx="3" fill="#0d9488" opacity="0.8" />
-              <rect x={x} y={58} width={w} height="2" fill="#5eead4" opacity="0.6" />
-              <rect x={x} y={65} width={w} height="2" fill="#5eead4" opacity="0.6" />
+              <rect x={x} y={42} width={w} height="22" rx="3" fill="#0d9488" opacity="0.8" />
+              <rect x={x} y={48} width={w} height="2" fill="#5eead4" opacity="0.6" />
+              <rect x={x} y={55} width={w} height="2" fill="#5eead4" opacity="0.6" />
             </g>
           ))}
         </>
@@ -1036,18 +1035,11 @@ function SceneArt({ scene }: { scene: SceneKind }) {
     case "history":
       return (
         <>
-          <defs>
-            <radialGradient id="hist-sun" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#fed7aa" />
-              <stop offset="100%" stopColor="#fed7aa" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <circle cx="50" cy="16" r="18" fill="url(#hist-sun)" opacity="0.8" />
-          <circle cx="50" cy="16" r="7" fill="#fdba74" opacity="0.85" />
-          {/* shophouse row */}
+          {/* sun is an HTML orb so it stays round */}
+          {/* shophouse row — bases sit on the riverbank line (y54), above the stream */}
           {[6, 20, 34, 48, 62, 76].map((x, i) => {
             const h = [26, 30, 24, 28, 32, 26][i];
-            const top = 66 - h;
+            const top = 54 - h;
             const col = ["#c2410c", "#b45309", "#a16207", "#9a3412", "#92400e", "#b45309"][i];
             return (
               <g key={x} opacity="0.82">
@@ -1061,10 +1053,12 @@ function SceneArt({ scene }: { scene: SceneKind }) {
               </g>
             );
           })}
-          {/* river */}
-          <rect x="0" y="66" width="100" height="8" fill="#0ea5e9" opacity="0.35" />
+          {/* riverbank line the town stands on, right above the stream */}
+          <line x1="0" y1="54" x2="100" y2="54" stroke="#92400e" strokeWidth="0.8" opacity="0.55" />
+          {/* river — a thin waterfront band just above the floor line */}
+          <rect x="0" y="55" width="100" height="4" fill="#0ea5e9" opacity="0.35" />
           {[8, 28, 48, 68, 88].map((x) => (
-            <path key={x} d={`M${x} 70 q 4 -1.5 8 0 t 8 0`} fill="none" stroke="#bae6fd" strokeWidth="0.6" opacity="0.6" />
+            <path key={x} d={`M${x} 57.5 q 4 -1.2 8 0 t 8 0`} fill="none" stroke="#bae6fd" strokeWidth="0.6" opacity="0.6" />
           ))}
           {/* hanging lanterns */}
           {[88, 94].map((x, i) => (
@@ -1099,23 +1093,17 @@ function SceneArt({ scene }: { scene: SceneKind }) {
           {[[40, 16], [60, 22], [78, 14], [24, 24], [92, 28]].map(([x, y], i) => (
             <path key={i} d={`M${x} ${y - 2} L${x + 0.7} ${y} L${x + 2} ${y} L${x + 0.7} ${y + 0.7} L${x} ${y + 2} L${x - 0.7} ${y + 0.7} L${x - 2} ${y} L${x - 0.7} ${y} Z`} fill="#fff7ed" opacity="0.8" />
           ))}
-          {/* stage with spotlights */}
-          <polygon points="20,74 30,40 36,40 30,74" fill="#fde68a" opacity="0.18" />
-          <polygon points="80,74 70,40 64,40 70,74" fill="#f9a8d4" opacity="0.18" />
-          <rect x="22" y="70" width="56" height="4" rx="1" fill="#7c3aed" opacity="0.4" />
+          {/* stage with spotlights — kept above the horizon so it isn't hidden
+              under the floor */}
+          <polygon points="20,54 30,22 36,22 30,54" fill="#fde68a" opacity="0.18" />
+          <polygon points="80,54 70,22 64,22 70,54" fill="#f9a8d4" opacity="0.18" />
+          <rect x="22" y="56" width="56" height="4" rx="1" fill="#7c3aed" opacity="0.4" />
         </>
       );
     case "nature":
       return (
         <>
-          <defs>
-            <radialGradient id="nat-sun" cx="50%" cy="50%" r="50%">
-              <stop offset="0%" stopColor="#fef9c3" />
-              <stop offset="100%" stopColor="#fef9c3" stopOpacity="0" />
-            </radialGradient>
-          </defs>
-          <circle cx="82" cy="15" r="14" fill="url(#nat-sun)" />
-          <circle cx="82" cy="15" r="6" fill="#fde047" opacity="0.85" />
+          {/* sun is an HTML orb so it stays round */}
           {/* birds */}
           {[[30, 18], [37, 15], [44, 19]].map(([x, y], i) => (
             <path key={i} d={`M${x} ${y} q 2 -2 4 0 q 2 -2 4 0`} fill="none" stroke="#475569" strokeWidth="0.6" opacity="0.6" />
@@ -1131,19 +1119,48 @@ function SceneArt({ scene }: { scene: SceneKind }) {
             </g>
           ))}
           {/* round trees */}
-          {[[44, 60], [54, 62], [70, 58]].map(([x, y], i) => (
+          {[[44, 46], [54, 48], [70, 44]].map(([x, y], i) => (
             <g key={i} opacity="0.8">
-              <rect x={x - 0.8} y={y} width="1.6" height={74 - y} fill="#854d0e" />
+              <rect x={x - 0.8} y={y} width="1.6" height={62 - y} fill="#854d0e" />
               <circle cx={x} cy={y - 2} r="5" fill="#16a34a" />
               <circle cx={x - 3} cy={y} r="3.5" fill="#22c55e" />
               <circle cx={x + 3} cy={y} r="3.5" fill="#15803d" />
             </g>
           ))}
-          {/* pond */}
-          <ellipse cx="60" cy="72" rx="22" ry="3.4" fill="#38bdf8" opacity="0.3" />
         </>
       );
   }
+}
+
+/**
+ * The big round body in each scene's sky (sun / planet / moon). Rendered as an
+ * HTML circle (`aspect-square` + `rounded-full`) so it stays perfectly round —
+ * the scenery SVG is stretched (`preserveAspectRatio="none"`) and would turn a
+ * `<circle>` into an ellipse. `cx`/`cy` are % of the scene, `size` is % of width.
+ */
+type SceneOrb = { cx: number; cy: number; size: number; gradient: string; ring?: boolean };
+const SCENE_ORB: Partial<Record<SceneKind, SceneOrb>> = {
+  lab: { cx: 20, cy: 23, size: 17, gradient: "radial-gradient(circle at 38% 35%, #c4b5fd, #7c3aed 55%, #4c1d95 100%)", ring: true },
+  hero: { cx: 18, cy: 17, size: 13, gradient: "radial-gradient(circle, #fef9c3 55%, #fde68a 66%, rgba(253,230,138,0) 70%)" },
+  eco: { cx: 85, cy: 14, size: 12, gradient: "radial-gradient(circle, #fde047 42%, rgba(253,224,71,0) 68%)" },
+  history: { cx: 50, cy: 13, size: 13, gradient: "radial-gradient(circle, #fdba74 42%, rgba(253,186,116,0) 68%)" },
+  nature: { cx: 83, cy: 13, size: 11, gradient: "radial-gradient(circle, #fde047 42%, rgba(254,249,195,0) 70%)" },
+};
+
+function SceneOrbs({ scene }: { scene: SceneKind }) {
+  const orb = SCENE_ORB[scene];
+  if (!orb) return null;
+  return (
+    <div
+      aria-hidden
+      className="pointer-events-none absolute aspect-square -translate-x-1/2 -translate-y-1/2 rounded-full"
+      style={{ left: `${orb.cx}%`, top: `${orb.cy}%`, width: `${orb.size}%`, background: orb.gradient }}
+    >
+      {orb.ring && (
+        <span className="absolute left-1/2 top-1/2 h-[34%] w-[175%] -translate-x-1/2 -translate-y-1/2 -rotate-12 rounded-[50%] border-2 border-sky-300/50" />
+      )}
+    </div>
+  );
 }
 
 /**
@@ -1158,13 +1175,220 @@ function SceneArt({ scene }: { scene: SceneKind }) {
  * `holder` = the icon panel, `ring` = its border, `glow` = halo, `stand` = base.
  */
 const STATION_THEME: Record<SceneKind, { holder: string; ring: string; glow: string; stand: string }> = {
-  lab: { holder: "bg-slate-900/70 text-cyan-50", ring: "ring-cyan-400/60", glow: "bg-cyan-400/40", stand: "bg-cyan-400/50" },
-  hero: { holder: "bg-white/85", ring: "ring-grape/50", glow: "bg-fuchsia-400/40", stand: "bg-grape/50" },
-  eco: { holder: "bg-white/85", ring: "ring-emerald-400/60", glow: "bg-emerald-400/35", stand: "bg-emerald-600/50" },
-  history: { holder: "bg-amber-50/90", ring: "ring-amber-500/60", glow: "bg-amber-400/40", stand: "bg-amber-700/50" },
-  festival: { holder: "bg-white/85", ring: "ring-pink-400/60", glow: "bg-pink-400/40", stand: "bg-pink-500/50" },
-  nature: { holder: "bg-white/85", ring: "ring-emerald-400/60", glow: "bg-emerald-400/35", stand: "bg-emerald-700/50" },
+  lab: { holder: "bg-slate-900/70 text-cyan-100", ring: "ring-cyan-400/60", glow: "bg-cyan-400/40", stand: "bg-cyan-400/50" },
+  hero: { holder: "bg-white/85 text-grape", ring: "ring-grape/50", glow: "bg-fuchsia-400/40", stand: "bg-grape/50" },
+  eco: { holder: "bg-white/85 text-emerald-600", ring: "ring-emerald-400/60", glow: "bg-emerald-400/35", stand: "bg-emerald-600/50" },
+  history: { holder: "bg-amber-50/90 text-amber-700", ring: "ring-amber-500/60", glow: "bg-amber-400/40", stand: "bg-amber-700/50" },
+  festival: { holder: "bg-white/85 text-pink-500", ring: "ring-pink-400/60", glow: "bg-pink-400/40", stand: "bg-pink-500/50" },
+  nature: { holder: "bg-white/85 text-emerald-600", ring: "ring-emerald-400/60", glow: "bg-emerald-400/35", stand: "bg-emerald-700/50" },
 };
+
+/** Which line-art icon each station shows, keyed by `${roomSlug}:${stationId}`. */
+const STATION_ICON: Record<string, string> = {
+  "robot-lab:panel": "panel",
+  "robot-lab:robot": "robot",
+  "robot-lab:decoder": "key",
+  "robot-lab:poster": "screen",
+  "kindness-castle:kindness": "heart",
+  "kindness-castle:honesty": "shield",
+  "kindness-castle:fairness": "scales",
+  "green-lab:panel": "solar",
+  "green-lab:bins": "bin",
+  "green-lab:circuit": "plug",
+  "sg-history:merlion": "lion",
+  "sg-history:timeline": "box",
+  "sg-history:river": "boat",
+  "sg-culture:hawker": "skewer",
+  "sg-culture:lights": "lantern",
+  "sg-culture:drums": "drum",
+  "sg-nature:river": "water",
+  "sg-nature:seed": "sprout",
+  "sg-nature:ranger": "key",
+  "sg-nature:trailmap": "map",
+};
+
+/** Hand-drawn line-art icon for a station (stroke = currentColor → themed). */
+function StationIcon({ name, className }: { name: string; className?: string }) {
+  const inner: Record<string, React.ReactNode> = {
+    check: <path d="M5 12.5l4 4L19 6.5" />,
+    panel: (
+      <>
+        <rect x="3" y="5" width="18" height="14" rx="2" />
+        <line x1="6" y1="9" x2="18" y2="9" />
+        <circle cx="9" cy="9" r="1.3" fill="currentColor" stroke="none" />
+        <line x1="6" y1="13" x2="18" y2="13" />
+        <circle cx="15" cy="13" r="1.3" fill="currentColor" stroke="none" />
+        <circle cx="7" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
+        <circle cx="10" cy="16.5" r="0.9" fill="currentColor" stroke="none" />
+      </>
+    ),
+    robot: (
+      <>
+        <rect x="5" y="8" width="14" height="11" rx="2.5" />
+        <line x1="12" y1="5" x2="12" y2="8" />
+        <circle cx="12" cy="4" r="1" fill="currentColor" stroke="none" />
+        <circle cx="9.5" cy="12.5" r="1.2" fill="currentColor" stroke="none" />
+        <circle cx="14.5" cy="12.5" r="1.2" fill="currentColor" stroke="none" />
+        <line x1="9.5" y1="16" x2="14.5" y2="16" />
+      </>
+    ),
+    key: (
+      <>
+        <circle cx="8.5" cy="8.5" r="3.5" />
+        <line x1="11" y1="11" x2="19.5" y2="19.5" />
+        <line x1="16.5" y1="16.5" x2="18.5" y2="14.5" />
+        <line x1="18.5" y1="18.5" x2="20.5" y2="16.5" />
+      </>
+    ),
+    screen: (
+      <>
+        <rect x="3" y="4" width="18" height="12" rx="2" />
+        <line x1="6" y1="8" x2="14" y2="8" />
+        <line x1="6" y1="11" x2="11" y2="11" />
+        <line x1="9" y1="20" x2="15" y2="20" />
+        <line x1="12" y1="16" x2="12" y2="20" />
+      </>
+    ),
+    heart: (
+      <path d="M12 20C5 15 3 11.5 3 8.8 3 6.5 4.8 5 7 5c1.6 0 3 1 5 3 2-2 3.4-3 5-3 2.2 0 4 1.5 4 3.8 0 2.7-2 6.2-9 11.2Z" />
+    ),
+    shield: (
+      <>
+        <path d="M12 3l7 3v5c0 5-3.5 8-7 9-3.5-1-7-4-7-9V6Z" />
+        <path d="M9 12l2.2 2.2L15 10" />
+      </>
+    ),
+    scales: (
+      <>
+        <line x1="12" y1="5" x2="12" y2="20" />
+        <circle cx="12" cy="4.5" r="1" fill="currentColor" stroke="none" />
+        <line x1="9" y1="20" x2="15" y2="20" />
+        <line x1="5" y1="8" x2="19" y2="8" />
+        <path d="M5 8l-2.5 5a3.5 3.5 0 0 0 5 0Z" />
+        <path d="M19 8l-2.5 5a3.5 3.5 0 0 0 5 0Z" />
+      </>
+    ),
+    solar: (
+      <>
+        <circle cx="18" cy="5" r="1.6" />
+        <path d="M4 18l3.5-9H20l-3.5 9Z" />
+        <line x1="6.2" y1="13.5" x2="17.8" y2="13.5" />
+        <line x1="11" y1="9" x2="10" y2="18" />
+        <line x1="15" y1="9" x2="13.5" y2="18" />
+      </>
+    ),
+    bin: (
+      <>
+        <path d="M6.5 8l1 12h9l1-12" />
+        <line x1="4.5" y1="8" x2="19.5" y2="8" />
+        <path d="M10 8V5.5h4V8" />
+        <line x1="10" y1="11" x2="10" y2="17" />
+        <line x1="14" y1="11" x2="14" y2="17" />
+      </>
+    ),
+    plug: (
+      <>
+        <line x1="9" y1="3.5" x2="9" y2="7" />
+        <line x1="15" y1="3.5" x2="15" y2="7" />
+        <path d="M7 7h10v3a5 5 0 0 1-10 0Z" />
+        <path d="M12 15v3a3 3 0 0 0 3 3h2" />
+      </>
+    ),
+    lion: (
+      <>
+        <circle cx="12" cy="13" r="4.5" />
+        <circle cx="8.5" cy="9" r="1.5" />
+        <circle cx="15.5" cy="9" r="1.5" />
+        <circle cx="10.5" cy="12.5" r="0.7" fill="currentColor" stroke="none" />
+        <circle cx="13.5" cy="12.5" r="0.7" fill="currentColor" stroke="none" />
+        <path d="M11 14.8q1 0.9 2 0" />
+        <line x1="12" y1="8.5" x2="12" y2="6.8" />
+        <line x1="16.5" y1="13" x2="18.2" y2="13" />
+        <line x1="7.5" y1="13" x2="5.8" y2="13" />
+        <line x1="15.4" y1="9.6" x2="16.6" y2="8.4" />
+        <line x1="8.6" y1="9.6" x2="7.4" y2="8.4" />
+      </>
+    ),
+    box: (
+      <>
+        <rect x="4.5" y="8" width="15" height="11.5" rx="1" />
+        <line x1="4.5" y1="12" x2="19.5" y2="12" />
+        <path d="M9.5 8V6h5v2" />
+        <line x1="10.5" y1="10" x2="13.5" y2="10" />
+      </>
+    ),
+    boat: (
+      <>
+        <path d="M3.5 14h17l-2 4a2 2 0 0 1-1.7 1H7.2a2 2 0 0 1-1.7-1Z" />
+        <line x1="12" y1="5" x2="12" y2="14" />
+        <path d="M12 6l5 6h-5Z" />
+        <path d="M3 20.5q2 1 4 0t4 0 4 0 4 0" />
+      </>
+    ),
+    skewer: (
+      <>
+        <line x1="5" y1="18.5" x2="19" y2="5.5" />
+        <circle cx="9" cy="14.5" r="1.7" fill="currentColor" stroke="none" />
+        <circle cx="12" cy="11.5" r="1.7" fill="currentColor" stroke="none" />
+        <circle cx="15" cy="8.5" r="1.7" fill="currentColor" stroke="none" />
+      </>
+    ),
+    lantern: (
+      <>
+        <rect x="10" y="4" width="4" height="2" rx="0.5" />
+        <path d="M12 6c-4 0-4.5 3-4.5 5s0.5 5 4.5 5 4.5-3 4.5-5-0.5-5-4.5-5Z" />
+        <line x1="8" y1="11" x2="16" y2="11" />
+        <line x1="12" y1="16" x2="12" y2="19.5" />
+      </>
+    ),
+    drum: (
+      <>
+        <ellipse cx="12" cy="8" rx="6" ry="2.2" />
+        <line x1="6" y1="8" x2="6" y2="15" />
+        <line x1="18" y1="8" x2="18" y2="15" />
+        <path d="M6 15a6 2.2 0 0 0 12 0" />
+        <path d="M6.5 9.5l11 4M6.5 13.5l11-4" />
+        <line x1="14.5" y1="3.5" x2="18.5" y2="8.5" />
+      </>
+    ),
+    water: (
+      <>
+        <path d="M3 9q3-3 6 0t6 0 6 0" />
+        <path d="M3 14q3-3 6 0t6 0 6 0" />
+        <path d="M3 19q3-3 6 0t6 0 6 0" />
+      </>
+    ),
+    sprout: (
+      <>
+        <line x1="12" y1="21" x2="12" y2="11" />
+        <path d="M12 14C8 14 6.5 12 6 8.5 10 9 11.5 11 12 14Z" />
+        <path d="M12 12c4 0 5.5-2 6-5.5-4 0.5-5.5 2.5-6 5.5Z" />
+        <line x1="7.5" y1="21" x2="16.5" y2="21" />
+      </>
+    ),
+    map: (
+      <>
+        <path d="M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2Z" />
+        <line x1="9" y1="4" x2="9" y2="18" />
+        <line x1="15" y1="6" x2="15" y2="20" />
+        <circle cx="12" cy="11" r="1" fill="currentColor" stroke="none" />
+      </>
+    ),
+  };
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className={className}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      {inner[name] ?? null}
+    </svg>
+  );
+}
 
 const DOORWAY_COLORS: Record<SceneKind, { recess: string; frame: string }> = {
   lab: { recess: "#0b1220", frame: "#38bdf8" },
@@ -1179,16 +1403,16 @@ function Doorway({ scene }: { scene: SceneKind }) {
   const { recess, frame } = DOORWAY_COLORS[scene];
   return (
     <g>
-      {/* recessed arched niche */}
-      <path d="M82 75 L82 60 Q82 51 90 51 Q98 51 98 60 L98 75 Z" fill={recess} opacity="0.92" />
+      {/* recessed arched niche set into the back wall, base at the horizon (y44) */}
+      <path d="M84 44 L84 32 Q84 24 90 24 Q96 24 96 32 L96 44 Z" fill={recess} opacity="0.92" />
       {/* outer frame */}
-      <path d="M82 75 L82 60 Q82 51 90 51 Q98 51 98 60 L98 75" fill="none" stroke={frame} strokeWidth="1.2" strokeOpacity="0.75" />
+      <path d="M84 44 L84 32 Q84 24 90 24 Q96 24 96 32 L96 44" fill="none" stroke={frame} strokeWidth="1" strokeOpacity="0.75" />
       {/* inner glow line */}
-      <path d="M84 75 L84 61 Q84 54 90 54 Q96 54 96 61 L96 75" fill="none" stroke={frame} strokeWidth="0.5" strokeOpacity="0.4" />
+      <path d="M85.5 44 L85.5 33 Q85.5 27 90 27 Q94.5 27 94.5 33 L94.5 44" fill="none" stroke={frame} strokeWidth="0.5" strokeOpacity="0.4" />
       {/* keystone */}
-      <rect x="88.8" y="50" width="2.4" height="2.6" rx="0.5" fill={frame} opacity="0.7" />
+      <rect x="89" y="22.8" width="2" height="2.2" rx="0.4" fill={frame} opacity="0.7" />
       {/* threshold step on the floor line */}
-      <rect x="79.5" y="74" width="21" height="1.8" rx="0.7" fill={frame} opacity="0.5" />
+      <rect x="82.5" y="43.2" width="15" height="1.5" rx="0.6" fill={frame} opacity="0.5" />
     </g>
   );
 }
@@ -1767,7 +1991,12 @@ function SortPuzzle({ puzzle, solved, onSolved, onWrong }: PuzzleProps<Extract<E
 /* ------------------------------------------------------------------ */
 
 function MazePuzzle({ puzzle, solved, onSolved }: PuzzleProps<Extract<EscapeRoomPuzzle, { kind: "maze" }>>) {
-  const grid = puzzle.grid;
+  // Pick one maze from the pool, fixed for the lifetime of this puzzle view.
+  const variant = useMemo(
+    () => puzzle.variants[Math.floor(Math.random() * puzzle.variants.length)],
+    [puzzle.variants],
+  );
+  const grid = variant.grid;
   const ends = useMemo(() => {
     let s: [number, number] = [1, 1];
     let g: [number, number] = [1, 1];
@@ -1820,7 +2049,7 @@ function MazePuzzle({ puzzle, solved, onSolved }: PuzzleProps<Extract<EscapeRoom
     setPos([nr, nc]);
   }
 
-  const sign = puzzle.signs?.find((s) => s.at[0] === pos[0] && s.at[1] === pos[1]);
+  const sign = variant.signs?.find((s) => s.at[0] === pos[0] && s.at[1] === pos[1]);
   const dpad =
     "flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-xl ring-2 ring-amber-100 transition hover:bg-amber-100 disabled:opacity-40";
 
@@ -1829,7 +2058,9 @@ function MazePuzzle({ puzzle, solved, onSolved }: PuzzleProps<Extract<EscapeRoom
       {puzzle.emoji && <div className="text-5xl">{puzzle.emoji}</div>}
       <p className="mt-3 font-fun text-lg font-700 text-slate-800">{puzzle.prompt}</p>
 
-      <div className="mt-4 flex justify-center">
+      {/* Maze on the left, controls on the right so the move pad stays in view
+          without scrolling. Stacks on very narrow screens. */}
+      <div className="mt-4 flex flex-col items-center justify-center gap-4 sm:flex-row sm:items-center sm:gap-6">
         <div
           className="inline-grid gap-0.5 rounded-xl bg-slate-900 p-2"
           style={{ gridTemplateColumns: `repeat(${grid[0].length}, minmax(0, 1fr))` }}
@@ -1854,32 +2085,39 @@ function MazePuzzle({ puzzle, solved, onSolved }: PuzzleProps<Extract<EscapeRoom
             }),
           )}
         </div>
-      </div>
 
-      {sign && !atGoal && (
-        <div className="mx-auto mt-3 max-w-sm rounded-2xl bg-sky/10 p-3 font-round text-sm text-sky-800 ring-1 ring-sky/20">
-          {sign.text}
+        {/* Controls column: signpost slot above the move pad. */}
+        <div className="flex flex-col items-center">
+          {/* Fixed-height slot so the move pad below never shifts when a
+              signpost appears at an intersection. */}
+          <div className="flex min-h-[5.5rem] w-44 items-center justify-center">
+            {sign && !atGoal && (
+              <div className="rounded-2xl bg-sky/10 p-3 font-round text-sm text-sky-800 ring-1 ring-sky/20">
+                {sign.text}
+              </div>
+            )}
+          </div>
+
+          <div className="mt-1 inline-grid grid-cols-3 gap-1">
+            <span />
+            <button onClick={() => move(-1, 0)} disabled={solved} aria-label="Up" className={dpad}>
+              ⬆️
+            </button>
+            <span />
+            <button onClick={() => move(0, -1)} disabled={solved} aria-label="Left" className={dpad}>
+              ⬅️
+            </button>
+            <span className="flex items-center justify-center font-fun text-[10px] font-700 text-slate-400">move</span>
+            <button onClick={() => move(0, 1)} disabled={solved} aria-label="Right" className={dpad}>
+              ➡️
+            </button>
+            <span />
+            <button onClick={() => move(1, 0)} disabled={solved} aria-label="Down" className={dpad}>
+              ⬇️
+            </button>
+            <span />
+          </div>
         </div>
-      )}
-
-      <div className="mt-3 inline-grid grid-cols-3 gap-1">
-        <span />
-        <button onClick={() => move(-1, 0)} disabled={solved} aria-label="Up" className={dpad}>
-          ⬆️
-        </button>
-        <span />
-        <button onClick={() => move(0, -1)} disabled={solved} aria-label="Left" className={dpad}>
-          ⬅️
-        </button>
-        <span className="flex items-center justify-center font-fun text-[10px] font-700 text-slate-400">move</span>
-        <button onClick={() => move(0, 1)} disabled={solved} aria-label="Right" className={dpad}>
-          ➡️
-        </button>
-        <span />
-        <button onClick={() => move(1, 0)} disabled={solved} aria-label="Down" className={dpad}>
-          ⬇️
-        </button>
-        <span />
       </div>
       <p className="mt-3 font-round text-xs text-slate-400">
         {atGoal
