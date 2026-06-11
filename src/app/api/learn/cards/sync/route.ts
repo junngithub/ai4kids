@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { cardSessionPlayers } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { getPortalSession } from "@/lib/portal-session";
-import { getCardSessionByCode, buildCardState } from "@/lib/card-session";
+import { getCardSessionByCode, buildCardState, maybeSkipAbsent } from "@/lib/card-session";
 
 const schema = z.object({ code: z.string().min(2).max(12) });
 
@@ -31,5 +31,7 @@ export async function POST(req: Request) {
       ),
     );
 
-  return NextResponse.json({ state: await buildCardState(game, learnerId) });
+  // Keep the game moving if the player on turn has left mid-game.
+  const fresh = await maybeSkipAbsent(game);
+  return NextResponse.json({ state: await buildCardState(fresh, learnerId) });
 }

@@ -3,7 +3,10 @@ import { z } from "zod";
 import { getPortalSession } from "@/lib/portal-session";
 import { getCardSessionByCode, startGame, buildCardState } from "@/lib/card-session";
 
-const schema = z.object({ code: z.string().min(2).max(12) });
+const schema = z.object({
+  code: z.string().min(2).max(12),
+  options: z.object({ pairs: z.number().int().min(4).max(16) }).optional(),
+});
 
 export async function POST(req: Request) {
   const session = await getPortalSession();
@@ -20,7 +23,7 @@ export async function POST(req: Request) {
   }
   if (game.status === "lobby") {
     try {
-      game = await startGame(game);
+      game = await startGame(game, parsed.data.options);
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: 400 });
     }

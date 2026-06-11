@@ -15,6 +15,7 @@ import {
 const schema = z.object({
   gameSlug: z.string().min(1),
   mode: z.enum(["solo", "coop", "versus"]),
+  options: z.object({ pairs: z.number().int().min(4).max(16) }).optional(),
 });
 
 export async function POST(req: Request) {
@@ -58,7 +59,7 @@ export async function POST(req: Request) {
   // Solo games skip the lobby — deal immediately.
   if (parsed.data.mode === "solo") {
     try {
-      created = await startGame(created);
+      created = await startGame(created, parsed.data.options);
     } catch (e) {
       return NextResponse.json({ error: (e as Error).message }, { status: 400 });
     }

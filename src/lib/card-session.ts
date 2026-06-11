@@ -6,18 +6,20 @@
  * engine registry — this layer treats state as opaque.
  */
 import { db } from "@/db";
-import { cardSessions, cardSessionPlayers, users } from "@/db/schema";
+import { cardSessions, cardSessionPlayers, users, activities, activityCompletions } from "@/db/schema";
 import { and, eq, gt, lt, notExists, or, sql } from "drizzle-orm";
 import { getEngine } from "./card-games/registry";
 import { getCardGame, type CardGameMode } from "./card-games/meta";
 import { generateCode } from "./escape-session";
 import { recordCompletion } from "./activities";
-import type { PlayerRef } from "./card-games/engine";
+import type { PlayerRef, GameOptions } from "./card-games/engine";
 
 export { generateCode };
 
 /** Players whose last heartbeat is older than this are treated as "left". */
 export const ACTIVE_MS = 30_000;
+/** A turn-holder absent this long gets their turn auto-skipped (multiplayer). */
+export const ABSENT_SKIP_MS = 20_000;
 /** Keep a finished game's row this long so teammates' polls can show the result. */
 export const DONE_GRACE_MS = 10 * 60_000;
 /** A session with no player seen within this window is treated as abandoned. */
@@ -45,7 +47,22 @@ export type CardStateDTO = {
   winners: number[];
   /** Engine-shaped, viewer-redacted game view. Null in the lobby. */
   game: unknown | null;
+  /** Authoritative play clock (solo time-attack). ISO strings. */
+  startedAt: string | null;
+  finishedAt: string | null; // set once the game is done
+  /** Viewer's best solo time (ms) for this game, incl. the current run if done. */
+  bestMs: number | null;
 };
+
+/** The viewer's fastest solo time (ms) for a game, from completion metadata. */
+async function soloBestMs(learnerId: number, activitySlug: string): Promise<number | null> {
+  const [row] = await db
+    .select({ best: sql<number | null>`min((${activityCompletions.metadata} ->> 'timeMs')::int)` })
+    .from(activityCompletions)
+    .innerJoin(activities, eq(activities.id, activityCompletions.activityId))
+    .where(and(eq(activities.slug, activitySlug), eq(activityCompletions.learnerId, learnerId)));
+  return row?.best ?? null;
+}
 
 export async function getCardSessionByCode(code: string): Promise<CardSessionRow | null> {
   const [s] = await db
@@ -164,7 +181,10 @@ export async function playerRefs(sessionId: number): Promise<PlayerRef[]> {
  * Deal a fresh game for the session's current players and flip it to `playing`.
  * Returns the updated row, or throws `Error(msg)` if the player count is wrong.
  */
-export async function startGame(session: CardSessionRow): Promise<CardSessionRow> {
+export async function startGame(
+  session: CardSessionRow,
+  opts?: GameOptions,
+): Promise<CardSessionRow> {
   const engine = getEngine(session.gameSlug);
   const meta = getCardGame(session.gameSlug);
   if (!engine || !meta) throw new Error("Unknown game.");
@@ -175,13 +195,54 @@ export async function startGame(session: CardSessionRow): Promise<CardSessionRow
     if (refs.length < meta.minPlayers) throw new Error(`Need at least ${meta.minPlayers} players.`);
     if (refs.length > meta.maxPlayers) throw new Error(`Up to ${meta.maxPlayers} players only.`);
   }
-  const state = engine.init(refs, session.mode as CardGameMode);
+  const state = engine.init(refs, session.mode as CardGameMode, opts);
   const [row] = await db
     .update(cardSessions)
     .set({ state, status: "playing", startedAt: new Date(), updatedAt: new Date() })
     .where(eq(cardSessions.id, session.id))
     .returning();
   return row;
+}
+
+/**
+ * If the player whose turn it is has gone quiet (left mid-game), skip their
+ * turn so the table isn't stuck waiting on them. Solo games never skip (the
+ * lone player is the one polling). Row-locked + re-checked so concurrent polls
+ * can't double-skip. Returns the (possibly updated) session row.
+ */
+export async function maybeSkipAbsent(session: CardSessionRow): Promise<CardSessionRow> {
+  if (session.status !== "playing" || !session.state || session.mode === "solo") return session;
+  const engine = getEngine(session.gameSlug);
+  if (!engine) return session;
+  const cur = engine.currentPlayer(session.state);
+
+  const cutoff = new Date(Date.now() - ABSENT_SKIP_MS);
+  const [row] = await db
+    .select({ lastSeen: cardSessionPlayers.lastSeen })
+    .from(cardSessionPlayers)
+    .where(and(eq(cardSessionPlayers.sessionId, session.id), eq(cardSessionPlayers.learnerId, cur)))
+    .limit(1);
+  if (row && row.lastSeen > cutoff) return session; // still present — nothing to do
+
+  let updated = session;
+  await db.transaction(async (tx) => {
+    const [s] = await tx
+      .select()
+      .from(cardSessions)
+      .where(eq(cardSessions.id, session.id))
+      .for("update");
+    // Re-check under the lock: a real move or another skip may have landed.
+    if (!s || s.status !== "playing" || !s.state) return;
+    if (engine.currentPlayer(s.state) !== cur) return;
+    const next = engine.skipTurn(s.state, cur);
+    const [u] = await tx
+      .update(cardSessions)
+      .set({ state: next, updatedAt: new Date() })
+      .where(eq(cardSessions.id, session.id))
+      .returning();
+    if (u) updated = u;
+  });
+  return updated;
 }
 
 /** Record a completion for every roster player once the game is done. */
@@ -193,13 +254,24 @@ export async function recordCardCompletions(session: CardSessionRow): Promise<vo
     .select({ learnerId: cardSessionPlayers.learnerId })
     .from(cardSessionPlayers)
     .where(eq(cardSessionPlayers.sessionId, session.id));
+  // Solo time-attack: store the elapsed ms so we can track personal bests.
+  const timeMs =
+    session.mode === "solo" && session.startedAt
+      ? Math.max(0, session.updatedAt.getTime() - session.startedAt.getTime())
+      : undefined;
   await Promise.all(
     rows.map((p) =>
       recordCompletion({
         learnerId: p.learnerId,
         activitySlug: meta.activitySlug,
         score: engine.scoreFor(session.state, p.learnerId),
-        metadata: { game: session.gameSlug, mode: session.mode, code: session.code, coop: session.mode !== "solo" },
+        metadata: {
+          game: session.gameSlug,
+          mode: session.mode,
+          code: session.code,
+          coop: session.mode !== "solo",
+          ...(timeMs != null ? { timeMs } : {}),
+        },
       }).catch(() => {}),
     ),
   );
@@ -216,10 +288,15 @@ export async function buildCardState(
   const game =
     session.state && engine ? engine.view(session.state, viewerId) : null;
 
+  // Solo time-attack: surface the play clock + the viewer's personal best.
+  const meta = getCardGame(session.gameSlug);
+  const isSolo = session.mode === "solo";
+  const bestMs = isSolo && meta ? await soloBestMs(viewerId, meta.activitySlug) : null;
+
   return {
     code: session.code,
     gameSlug: session.gameSlug,
-    gameTitle: getCardGame(session.gameSlug)?.title ?? session.gameSlug,
+    gameTitle: meta?.title ?? session.gameSlug,
     mode: session.mode as CardGameMode,
     status: session.status,
     hostId: session.hostId,
@@ -233,5 +310,8 @@ export async function buildCardState(
     })),
     winners,
     game,
+    startedAt: session.startedAt ? session.startedAt.toISOString() : null,
+    finishedAt: session.status === "done" ? session.updatedAt.toISOString() : null,
+    bestMs,
   };
 }

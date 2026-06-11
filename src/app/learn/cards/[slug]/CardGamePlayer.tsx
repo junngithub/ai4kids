@@ -47,7 +47,18 @@ type MathView = {
   yourTurn: boolean;
   finished: number[];
 };
-type GameView = MemoryView | DiscardView | MathView;
+type BeatDieView = {
+  kind: "beatdie";
+  die: number | null;
+  drawCount: number;
+  yourHand: number[];
+  hands: Record<number, number>;
+  turnPlayerId: number;
+  yourTurn: boolean;
+  finished: number[];
+  canBeat: boolean;
+};
+type GameView = MemoryView | DiscardView | MathView | BeatDieView;
 
 async function post(path: string, body: unknown): Promise<{ code?: string; state: CardStateDTO }> {
   const r = await fetch(`/api/learn/cards/${path}`, {
@@ -60,11 +71,17 @@ async function post(path: string, body: unknown): Promise<{ code?: string; state
   return data;
 }
 
+/** Memory Match board-size choices (pairs of cards). */
+const PAIR_CHOICES = [6, 8, 10, 12] as const;
+
 export function CardGamePlayer({ game }: { game: CardGameMeta }) {
   const [state, setState] = useState<CardStateDTO | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Memory Match only: how many pairs to deal. Chosen before the game starts.
+  const [pairs, setPairs] = useState(8);
+  const isMemory = game.slug === "memory-match";
 
   const statusRef = useRef<string>("");
   statusRef.current = state?.status ?? "";
@@ -83,7 +100,11 @@ export function CardGamePlayer({ game }: { game: CardGameMeta }) {
 
   const createGame = (mode: CardGameMode) =>
     run(async () => {
-      const data = await post("create", { gameSlug: game.slug, mode });
+      const data = await post("create", {
+        gameSlug: game.slug,
+        mode,
+        ...(isMemory ? { options: { pairs } } : {}),
+      });
       setCode(data.code ?? null);
       setState(data.state);
     });
@@ -98,7 +119,10 @@ export function CardGamePlayer({ game }: { game: CardGameMeta }) {
   const startGame = () =>
     run(async () => {
       if (!code) return;
-      const data = await post("start", { code });
+      const data = await post("start", {
+        code,
+        ...(isMemory ? { options: { pairs } } : {}),
+      });
       setState(data.state);
     });
 
@@ -169,14 +193,60 @@ export function CardGamePlayer({ game }: { game: CardGameMeta }) {
       )}
 
       {!state || !code ? (
-        <Menu game={game} busy={busy} onSolo={() => createGame("solo")} onHost={createGame} onJoin={joinGame} />
+        <Menu
+          game={game}
+          busy={busy}
+          onSolo={() => createGame("solo")}
+          onHost={createGame}
+          onJoin={joinGame}
+          pairControl={isMemory ? <PairSelector pairs={pairs} setPairs={setPairs} disabled={busy} /> : null}
+        />
       ) : state.status === "lobby" ? (
-        <Lobby game={game} state={state} code={code} busy={busy} onStart={startGame} onLeave={leave} />
+        <Lobby
+          game={game}
+          state={state}
+          code={code}
+          busy={busy}
+          onStart={startGame}
+          onLeave={leave}
+          pairControl={isMemory && state.hostId === state.you ? <PairSelector pairs={pairs} setPairs={setPairs} disabled={busy} /> : null}
+        />
       ) : state.status === "done" ? (
         <Results state={state} onAgain={leave} />
       ) : (
         <Board state={state} busy={busy} onMove={sendMove} />
       )}
+    </div>
+  );
+}
+
+/** Memory Match board-size picker (shown to the host / solo player pre-game). */
+function PairSelector({
+  pairs,
+  setPairs,
+  disabled,
+}: {
+  pairs: number;
+  setPairs: (n: number) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="rounded-3xl bg-white p-4 shadow-sm ring-1 ring-slate-100">
+      <div className="font-fun text-sm font-700 text-slate-700">How many cards?</div>
+      <div className="mt-2 flex flex-wrap gap-2">
+        {PAIR_CHOICES.map((n) => (
+          <button
+            key={n}
+            onClick={() => setPairs(n)}
+            disabled={disabled}
+            className={`rounded-full px-3.5 py-1.5 font-fun text-sm font-700 transition disabled:opacity-50 ${
+              pairs === n ? "bg-grape text-white shadow" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
+            }`}
+          >
+            {n * 2}
+          </button>
+        ))}
+      </div>
     </div>
   );
 }
@@ -190,12 +260,14 @@ function Menu({
   onSolo,
   onHost,
   onJoin,
+  pairControl,
 }: {
   game: CardGameMeta;
   busy: boolean;
   onSolo: () => void;
   onHost: (mode: CardGameMode) => void;
   onJoin: (code: string) => void;
+  pairControl?: React.ReactNode;
 }) {
   const [joinCode, setJoinCode] = useState("");
   const multiModes = game.modes.filter((m) => m !== "solo") as CardGameMode[];
@@ -217,6 +289,7 @@ function Menu({
 
       {/* Choices */}
       <div className="flex flex-col gap-4">
+        {pairControl}
         {game.modes.includes("solo") && (
           <button
             onClick={onSolo}
@@ -289,6 +362,7 @@ function Lobby({
   busy,
   onStart,
   onLeave,
+  pairControl,
 }: {
   game: CardGameMeta;
   state: CardStateDTO;
@@ -296,6 +370,7 @@ function Lobby({
   busy: boolean;
   onStart: () => void;
   onLeave: () => void;
+  pairControl?: React.ReactNode;
 }) {
   const youHost = state.hostId === state.you;
   const count = state.players.length;
@@ -331,6 +406,8 @@ function Lobby({
         ))}
       </div>
 
+      {pairControl && <div className="mt-5 flex justify-center">{pairControl}</div>}
+
       <div className="mt-6">
         {youHost ? (
           <button
@@ -362,6 +439,13 @@ function Results({ state, onAgain }: { state: CardStateDTO; onAgain: () => void 
   const solo = state.mode === "solo";
   const coop = state.mode === "coop";
 
+  // Solo time + personal best. `bestMs` already includes this run, so this run
+  // beat (or tied) the record exactly when its time equals the best.
+  const start = state.startedAt ? new Date(state.startedAt).getTime() : null;
+  const end = state.finishedAt ? new Date(state.finishedAt).getTime() : null;
+  const thisMs = start != null && end != null ? end - start : null;
+  const newBest = solo && thisMs != null && state.bestMs != null && thisMs <= state.bestMs;
+
   return (
     <div className="mt-5 rounded-3xl bg-gradient-to-br from-sunny/30 to-coral/20 p-8 text-center shadow-sm ring-1 ring-amber-100">
       <div className="text-6xl">{youWon || coop || solo ? "🏆" : "🎉"}</div>
@@ -374,6 +458,20 @@ function Results({ state, onAgain }: { state: CardStateDTO; onAgain: () => void 
               ? "You win! 🎉"
               : `${nameById.get(state.winners[0]) ?? "Someone"} wins!`}
       </h2>
+
+      {solo && thisMs != null && (
+        <div className="mx-auto mt-4 max-w-xs">
+          <div className="rounded-2xl bg-white/70 px-5 py-3 font-fun font-700 text-slate-700 shadow-sm">
+            <span className="tabular-nums">⏱️ Your time: {fmtTime(thisMs)}</span>
+            {state.bestMs != null && (
+              <span className="ml-3 tabular-nums text-amber-600">🏆 Best: {fmtTime(state.bestMs)}</span>
+            )}
+          </div>
+          {newBest && (
+            <div className="mt-2 font-fun font-700 text-emerald-600">✨ New personal best!</div>
+          )}
+        </div>
+      )}
 
       {!solo && !coop && (
         <ol className="mx-auto mt-5 max-w-xs space-y-2 text-left">
@@ -401,6 +499,47 @@ function Results({ state, onAgain }: { state: CardStateDTO; onAgain: () => void 
 }
 
 /* ------------------------------------------------------------------ */
+/* Solo time-attack clock (live ticking) + personal best               */
+/* ------------------------------------------------------------------ */
+function fmtTime(ms: number): string {
+  const s = Math.max(0, Math.round(ms / 1000));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+function SoloClock({
+  startedAt,
+  finishedAt,
+  bestMs,
+}: {
+  startedAt: string | null;
+  finishedAt: string | null;
+  bestMs: number | null;
+}) {
+  const start = startedAt ? new Date(startedAt).getTime() : null;
+  const end = finishedAt ? new Date(finishedAt).getTime() : null;
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (end || !start) return; // frozen once finished
+    const id = setInterval(() => setNow(Date.now()), 250);
+    return () => clearInterval(id);
+  }, [end, start]);
+  const elapsed = start != null ? (end ?? now) - start : 0;
+
+  return (
+    <div className="mb-4 flex items-center justify-center gap-3 font-fun font-700">
+      <span className="rounded-2xl bg-sky/10 px-4 py-1.5 text-sky-700 ring-1 ring-sky/20 tabular-nums">
+        ⏱️ {fmtTime(elapsed)}
+      </span>
+      {bestMs != null && (
+        <span className="rounded-2xl bg-amber-50 px-4 py-1.5 text-amber-600 ring-1 ring-amber-100 tabular-nums">
+          🏆 Best {fmtTime(bestMs)}
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
 /* Board dispatcher + turn banner                                      */
 /* ------------------------------------------------------------------ */
 function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; onMove: (m: unknown) => void }) {
@@ -410,6 +549,9 @@ function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; on
 
   return (
     <div className="mt-5">
+      {state.mode === "solo" && (
+        <SoloClock startedAt={state.startedAt} finishedAt={state.finishedAt} bestMs={state.bestMs} />
+      )}
       {state.mode !== "solo" && (
         <div
           className={`mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-2.5 font-fun font-700 ring-1 ${
@@ -435,6 +577,7 @@ function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; on
       {game.kind === "memory" && <MemoryBoard view={game} busy={busy} onMove={onMove} />}
       {game.kind === "discard" && <DiscardBoard view={game} busy={busy} onMove={onMove} />}
       {game.kind === "math" && <MathBoard view={game} busy={busy} onMove={onMove} />}
+      {game.kind === "beatdie" && <BeatDieBoard view={game} busy={busy} onMove={onMove} />}
     </div>
   );
 }
@@ -453,12 +596,19 @@ function MemoryBoard({ view, busy, onMove }: { view: MemoryView; busy: boolean; 
   const lock = busy || view.mismatch; // don't accept flips mid-resolve
   const flippedCount = view.cards.filter((c) => c.flipped).length;
 
+  // Smaller cards, more per row as the board grows, capped so they stay compact.
+  const total = view.cards.length;
+  const cols = total <= 16 ? 4 : total <= 20 ? 5 : 6;
+
   return (
     <div>
       <div className="mb-3 flex items-center justify-between font-fun text-sm font-700 text-slate-500">
         <span>Pairs found: {view.pairsFound}/{view.pairsTotal}</span>
       </div>
-      <div className="grid grid-cols-4 gap-2.5 sm:gap-3">
+      <div
+        className="mx-auto grid gap-2 sm:gap-2.5"
+        style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))`, maxWidth: `${cols * 4.75}rem` }}
+      >
         {view.cards.map((c) => {
           const up = c.flipped || c.matched;
           const disabled = lock || up || !view.yourTurn || flippedCount >= 2;
@@ -467,20 +617,26 @@ function MemoryBoard({ view, busy, onMove }: { view: MemoryView; busy: boolean; 
               key={c.id}
               onClick={() => onMove({ type: "flip", cardId: c.id })}
               disabled={disabled}
-              className={`flex aspect-[3/4] items-center justify-center rounded-2xl text-center font-fun font-700 shadow-sm transition ${
+              className={`flex aspect-square items-center justify-center rounded-xl p-0.5 text-center font-fun font-700 shadow-sm transition ${
                 c.matched
                   ? "bg-mint/20 text-emerald-700 ring-1 ring-mint/40"
                   : up
-                    ? "scale-[1.03] bg-white text-slate-800 ring-2 ring-sky/40"
-                    : "bg-gradient-to-br from-grape to-bubble text-white hover:scale-[1.02]"
-              } ${disabled && !up && !c.matched ? "" : ""}`}
+                    ? "scale-[1.05] bg-white text-slate-800 ring-2 ring-sky/40"
+                    : "bg-gradient-to-br from-grape to-bubble text-white hover:scale-[1.03]"
+              }`}
             >
               {up ? (
-                <span className={c.face === "emoji" ? "text-3xl sm:text-4xl" : "px-1 text-base sm:text-lg"}>
+                <span
+                  className={
+                    c.face === "emoji"
+                      ? "text-4xl sm:text-5xl"
+                      : "break-words text-lg leading-none sm:text-xl"
+                  }
+                >
                   {c.label}
                 </span>
               ) : (
-                <span className="text-2xl text-white/70">★</span>
+                <span className="text-xl text-white/60">★</span>
               )}
             </button>
           );
@@ -494,11 +650,19 @@ function MemoryBoard({ view, busy, onMove }: { view: MemoryView; busy: boolean; 
 /* Discard (Tower Tumble) board                                        */
 /* ------------------------------------------------------------------ */
 function DiscardBoard({ view, busy, onMove }: { view: DiscardView; busy: boolean; onMove: (m: unknown) => void }) {
-  const [selected, setSelected] = useState<number | null>(null);
+  // Track the selected card by hand INDEX so only the tapped card highlights,
+  // even when the hand holds duplicate values.
+  const [sel, setSel] = useState<number | null>(null);
 
+  // Drop a stale index after a play/poll changes the hand.
+  useEffect(() => {
+    setSel((s) => (s != null && view.yourHand[s] != null ? s : null));
+  }, [view.yourHand]);
+
+  const selectedCard = sel != null ? view.yourHand[sel] : null;
   const legalPile = (pileTop: number, card: number) => card === 10 || card > pileTop;
   const canPlayCardOnPile = (pileIdx: number) =>
-    selected != null && view.yourTurn && !busy && legalPile(view.piles[pileIdx], selected);
+    selectedCard != null && view.yourTurn && !busy && legalPile(view.piles[pileIdx], selectedCard);
 
   return (
     <div>
@@ -510,9 +674,9 @@ function DiscardBoard({ view, busy, onMove }: { view: DiscardView; busy: boolean
             <button
               key={i}
               onClick={() => {
-                if (active && selected != null) {
-                  onMove({ type: "play", pile: i, card: selected });
-                  setSelected(null);
+                if (active && selectedCard != null) {
+                  onMove({ type: "play", pile: i, card: selectedCard });
+                  setSel(null);
                 }
               }}
               disabled={!active}
@@ -529,11 +693,16 @@ function DiscardBoard({ view, busy, onMove }: { view: DiscardView; busy: boolean
         })}
       </div>
       <p className="mt-2 text-center font-round text-xs text-slate-400">
-        {selected != null ? "Tap a glowing pile to play your card." : "Pick a card, then a pile. Play a 10 to clear a pile."}
+        {selectedCard != null ? "Tap a glowing pile to play your card." : "Pick a card, then a pile. Play a 10 to clear a pile."}
       </p>
 
       {/* Hand */}
-      <Hand cards={view.yourHand} selected={selected != null ? [selected] : []} onToggle={(c) => setSelected((s) => (s === c ? null : c))} disabled={!view.yourTurn || busy} />
+      <Hand
+        cards={view.yourHand}
+        selectedIndex={sel}
+        onToggle={(idx) => setSel((s) => (s === idx ? null : idx))}
+        disabled={!view.yourTurn || busy}
+      />
 
       {/* Actions */}
       <div className="mt-3 flex justify-center">
@@ -580,21 +749,15 @@ function MathBoard({ view, busy, onMove }: { view: MathView; busy: boolean; onMo
 
   return (
     <div>
-      {/* Target + piles */}
+      {/* Target + draw pile */}
       <div className="flex items-center justify-center gap-4">
         <div className="rounded-3xl bg-sky/10 px-6 py-4 text-center ring-1 ring-sky/20">
           <div className="font-round text-xs text-slate-400">make</div>
           <div className="font-fun text-5xl font-700 text-sky-700">{view.target}</div>
         </div>
-        <div className="flex gap-3">
-          <div className="flex aspect-[3/4] w-16 flex-col items-center justify-center rounded-2xl bg-white text-slate-800 shadow-sm ring-1 ring-slate-200">
-            <span className="font-fun text-2xl font-700">{view.discardTop}</span>
-            <span className="font-round text-[9px] text-slate-400">discard</span>
-          </div>
-          <div className="flex aspect-[3/4] w-16 flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-grape to-bubble text-white shadow-sm">
-            <span className="font-fun text-2xl font-700">{view.drawCount}</span>
-            <span className="font-round text-[9px] text-white/70">draw</span>
-          </div>
+        <div className="flex aspect-[3/4] w-16 flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-grape to-bubble text-white shadow-sm">
+          <span className="font-fun text-2xl font-700">{view.drawCount}</span>
+          <span className="font-round text-[9px] text-white/70">draw</span>
         </div>
       </div>
       <p className="mt-2 text-center font-round text-xs text-slate-400">
@@ -654,26 +817,146 @@ function MathBoard({ view, busy, onMove }: { view: MathView; busy: boolean; onMo
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* Beat the Die board                                                  */
+/* ------------------------------------------------------------------ */
+function BeatDieBoard({ view, busy, onMove }: { view: BeatDieView; busy: boolean; onMove: (m: unknown) => void }) {
+  const [picked, setPicked] = useState<number[]>([]);
+
+  // Drop stale indices after the hand changes, and clear picks on a new turn.
+  useEffect(() => {
+    setPicked((p) => p.filter((i) => view.yourHand[i] != null).slice(0, 2));
+  }, [view.yourHand]);
+  useEffect(() => {
+    setPicked([]);
+  }, [view.die, view.turnPlayerId]);
+
+  const rolled = view.die != null;
+  const pickedValues = picked.map((i) => view.yourHand[i]).filter((v) => v != null);
+  const sum = pickedValues.reduce((a, b) => a + b, 0);
+  const beats = rolled && sum >= (view.die ?? 0);
+  const canDiscard = beats && view.yourTurn && !busy && pickedValues.length >= 1;
+  const canDraw = rolled && view.yourTurn && !busy && !view.canBeat;
+
+  const toggle = (idx: number) =>
+    setPicked((p) => (p.includes(idx) ? p.filter((k) => k !== idx) : p.length >= 2 ? p : [...p, idx]));
+
+  return (
+    <div>
+      {/* Die + draw pile */}
+      <div className="flex items-center justify-center gap-4">
+        <div className="flex h-24 w-24 flex-col items-center justify-center rounded-3xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow ring-1 ring-emerald-300">
+          {rolled ? (
+            <>
+              <span className="font-fun text-5xl font-700 leading-none">{view.die}</span>
+              <span className="mt-1 font-round text-[10px] text-white/80">beat it!</span>
+            </>
+          ) : (
+            <span className="text-4xl">🎲</span>
+          )}
+        </div>
+        <div className="flex aspect-[3/4] w-16 flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-grape to-bubble text-white shadow-sm">
+          <span className="font-fun text-2xl font-700">{view.drawCount}</span>
+          <span className="font-round text-[9px] text-white/70">draw</span>
+        </div>
+      </div>
+
+      {/* Roll prompt / instruction */}
+      {!rolled ? (
+        <div className="mt-4 text-center">
+          {view.yourTurn ? (
+            <button
+              onClick={() => onMove({ type: "roll" })}
+              disabled={busy}
+              className="rounded-full bg-emerald-500 px-8 py-3 font-fun text-lg font-700 text-white shadow transition hover:scale-105 disabled:opacity-50"
+            >
+              🎲 Roll the die
+            </button>
+          ) : (
+            <p className="font-round text-sm text-slate-400">Waiting for the roll…</p>
+          )}
+        </div>
+      ) : (
+        <p className="mt-3 text-center font-round text-xs text-slate-400">
+          {view.canBeat
+            ? `Discard one or two cards that add up to at least ${view.die}.`
+            : `You can't beat ${view.die} — draw a card.`}
+        </p>
+      )}
+
+      {/* Hand */}
+      <div className="mt-4 flex flex-wrap justify-center gap-2">
+        {view.yourHand.map((card, idx) => {
+          const on = picked.includes(idx);
+          return (
+            <button
+              key={idx}
+              onClick={() => toggle(idx)}
+              disabled={!rolled || !view.yourTurn || busy}
+              className={`flex aspect-[3/4] w-14 items-center justify-center rounded-2xl font-fun text-2xl font-700 shadow-sm transition disabled:opacity-50 ${
+                on ? "scale-[1.06] bg-emerald-500 text-white ring-2 ring-emerald-400" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:scale-[1.03]"
+              }`}
+            >
+              {card}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Actions */}
+      <div className="mt-4 flex justify-center gap-3">
+        <button
+          onClick={() => {
+            if (canDiscard) {
+              onMove({ type: "discard", cards: pickedValues });
+              setPicked([]);
+            }
+          }}
+          disabled={!canDiscard}
+          className="rounded-full bg-coral px-6 py-2.5 font-fun font-700 text-white shadow transition hover:scale-105 disabled:opacity-40"
+        >
+          Discard ✓{pickedValues.length > 0 ? ` (${sum})` : ""}
+        </button>
+        <button
+          onClick={() => {
+            onMove({ type: "draw" });
+            setPicked([]);
+          }}
+          disabled={!canDraw}
+          className="rounded-full bg-slate-100 px-6 py-2.5 font-fun font-700 text-slate-600 transition hover:bg-slate-200 disabled:opacity-40"
+        >
+          Draw 🃏
+        </button>
+      </div>
+      {rolled && picked.length > 0 && !beats && (
+        <p className="mt-2 text-center font-round text-xs text-coral">
+          {sum} doesn&apos;t beat {view.die} yet.
+        </p>
+      )}
+    </div>
+  );
+}
+
 /* ---- Shared hand strip (discard game) ---- */
 function Hand({
   cards,
-  selected,
+  selectedIndex,
   onToggle,
   disabled,
 }: {
   cards: number[];
-  selected: number[];
-  onToggle: (card: number) => void;
+  selectedIndex: number | null;
+  onToggle: (idx: number) => void;
   disabled: boolean;
 }) {
   return (
     <div className="mt-4 flex flex-wrap justify-center gap-2">
       {cards.map((card, idx) => {
-        const on = selected.includes(card);
+        const on = idx === selectedIndex;
         return (
           <button
             key={idx}
-            onClick={() => onToggle(card)}
+            onClick={() => onToggle(idx)}
             disabled={disabled}
             className={`flex aspect-[3/4] w-12 items-center justify-center rounded-xl font-fun text-xl font-700 shadow-sm transition disabled:opacity-50 ${
               on ? "scale-[1.08] bg-coral text-white ring-2 ring-coral/60" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:scale-[1.04]"

@@ -43,7 +43,13 @@ function hasLegalMove(hand: number[], piles: number[]): boolean {
 export const discard: GameEngine<DiscardState> = {
   init(players: PlayerRef[], mode: GameMode): DiscardState {
     const deck = shuffle(makeDeck());
-    const piles = deck.slice(0, PILES).map((c) => c.v);
+    // Seed the four piles, but never start a pile on a 10: a 10 can only be
+    // beaten by another 10, so a seeded 10 is an unbeatable, dead pile from the
+    // off (the cause of the early-game softlock). Treat a seeded 10 as cleared
+    // (top 0 = any card plays). Pile tops can otherwise never reach 10, because
+    // playing a 10 always CLEARS a pile rather than landing on top — so with
+    // this one fix no pile is ever permanently locked.
+    const piles = deck.slice(0, PILES).map((c) => (c.v === 10 ? 0 : c.v));
     const rest = deck.slice(PILES);
     const order = players.map((p) => p.id);
     const each = Math.floor(rest.length / order.length);
@@ -129,5 +135,18 @@ export const discard: GameEngine<DiscardState> = {
   scoreFor(state, playerId): number {
     if (!this.isOver(state)) return 0;
     return placeScore(this.winners(state).indexOf(playerId), state.order.length);
+  },
+
+  currentPlayer(state): number {
+    return state.order[state.turn];
+  },
+
+  skipTurn(state, playerId): DiscardState {
+    if (state.order[state.turn] !== playerId) return state;
+    const s: DiscardState = structuredClone(state);
+    // A leaver's turn is just passed on (don't count it toward the all-stuck
+    // pile reset — that's for genuinely blocked play, not absence).
+    s.turn = nextTurn(s.order, s.turn, s.finished);
+    return s;
   },
 };
