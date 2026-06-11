@@ -27,9 +27,9 @@ npm run migrate:wp     # Import a WordPress SQL dump (parses wp_*, downloads ima
 
 There is no test suite — verification is `npm run build` + browser smoke-testing the dev server. The Next build also runs the TS type-check, so it's the canonical "is this broken" gate.
 
-**Port**: this project runs on **3080**, not Next's default 3000 — port 3000 is used by another local app. Both `dev` and `start` pass `-p 3080`; `.env` (`AUTH_URL`, `NEXT_PUBLIC_SITE_URL`) is pinned to `http://localhost:3080`. If you change the port, update all three in lockstep or Auth.js will silently issue cookies for the wrong host.
+**Port**: this project runs on **3080**, not Next's default 3000 — port 3000 is used by another local app, and 3070 is used by the main Tertiary Infotech Academy site. Both `dev` and `start` pass `-p 3080`; `.env` (`AUTH_URL`, `NEXT_PUBLIC_SITE_URL`) is pinned to `http://localhost:3080`. If you change the port, update all three in lockstep or Auth.js will silently issue cookies for the wrong host.
 
-**ALWAYS** start the local dev server at `http://localhost:3080/` — never on 3000 or any other port. Use `npm run dev` (which already binds 3080); never `next dev` directly without `-p 3080`. When opening the app in a browser or sharing URLs, use `http://localhost:3080/` (not `localhost:3000`). Before starting, check that 3080 is free with `lsof -ti:3080`; if a stale process is bound, kill it rather than falling back to another port.
+**ALWAYS** start the local dev server at `http://localhost:3080/` — never on 3000, 3070, or any other port. Use `npm run dev` (which already binds 3080); never `next dev` directly without `-p 3080`. When opening the app in a browser or sharing URLs, use `http://localhost:3080/` (not `localhost:3000` or `localhost:3070`). Before starting, check that 3080 is free with `lsof -ti:3080`; if a stale process is bound, kill it rather than falling back to another port.
 
 **If the user reports `http://localhost:3080/` is down (or "the local site isn't working", "localhost not loading", etc.), bring it back up immediately — do NOT wait for the user to ask explicitly.** Procedure: (1) `lsof -ti:3080` to see if anything is bound; (2) if nothing is bound, run `npm run dev` in the background; (3) verify with `curl -s -o /dev/null -w "HTTP %{http_code}\n" http://localhost:3080/` returning `HTTP 200` before reporting success. Treat dev-server restarts as part of the standard workflow, not a separate task.
 
@@ -126,3 +126,69 @@ Coolify env vars vs `.env`:
 - `DATABASE_URL` differs per environment (Coolify provides its own; local points to localhost).
 - `REMOTE_SYNC_URL` is local-only (used by the CLI to target prod).
 - Everything else (Gmail OAuth, Anthropic token, lead-notification email) should live in `/admin/settings`, not env.
+
+## Behavioral Guidelines
+
+Behavioral guidelines to reduce common LLM coding mistakes (adapted from [Andrej Karpathy's CLAUDE.md](https://github.com/multica-ai/andrej-karpathy-skills/blob/main/CLAUDE.md)). Apply alongside the project-specific instructions above.
+
+**Tradeoff:** These guidelines bias toward caution over speed. For trivial tasks, use judgment.
+
+### 1. Think Before Coding
+
+**Don't assume. Don't hide confusion. Surface tradeoffs.**
+
+Before implementing:
+- State your assumptions explicitly. If uncertain, ask.
+- If multiple interpretations exist, present them — don't pick silently.
+- If a simpler approach exists, say so. Push back when warranted.
+- If something is unclear, stop. Name what's confusing. Ask.
+
+### 2. Simplicity First
+
+**Minimum code that solves the problem. Nothing speculative.**
+
+- No features beyond what was asked.
+- No abstractions for single-use code.
+- No "flexibility" or "configurability" that wasn't requested.
+- No error handling for impossible scenarios.
+- If you write 200 lines and it could be 50, rewrite it.
+
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
+
+### 3. Surgical Changes
+
+**Touch only what you must. Clean up only your own mess.**
+
+When editing existing code:
+- Don't "improve" adjacent code, comments, or formatting.
+- Don't refactor things that aren't broken.
+- Match existing style, even if you'd do it differently.
+- If you notice unrelated dead code, mention it — don't delete it.
+
+When your changes create orphans:
+- Remove imports/variables/functions that YOUR changes made unused.
+- Don't remove pre-existing dead code unless asked.
+
+The test: Every changed line should trace directly to the user's request.
+
+### 4. Goal-Driven Execution
+
+**Define success criteria. Loop until verified.**
+
+Transform tasks into verifiable goals:
+- "Add validation" → "Write tests for invalid inputs, then make them pass"
+- "Fix the bug" → "Write a test that reproduces it, then make it pass"
+- "Refactor X" → "Ensure tests pass before and after"
+
+For multi-step tasks, state a brief plan:
+```
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+```
+
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
+
+---
+
+**These guidelines are working if:** fewer unnecessary changes in diffs, fewer rewrites due to overcomplication, and clarifying questions come before implementation rather than after mistakes.
