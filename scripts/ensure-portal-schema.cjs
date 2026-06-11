@@ -1,17 +1,22 @@
 /**
- * Idempotent schema bootstrap, run once at container startup (see Dockerfile).
+ * Idempotent portal bootstrap, run once at container startup (see Dockerfile).
  *
  * The production image runs no Drizzle migration step (CMD is just the server),
  * so newer portal tables are created here on deploy. Everything is static
  * `CREATE ... IF NOT EXISTS` DDL — there is no string interpolation or user
  * input, so there is nothing to inject — and it is safe to run on every boot.
  *
+ * It also upserts the few activity catalogue rows that don't come from a
+ * synced source (escape rooms, Brain Arcade card games) so their tiles appear
+ * in production without a manual `seed-portal` run. These are `ON CONFLICT DO
+ * NOTHING`, so they never clobber edits made in the admin.
+ *
  * Failures are logged but never block the server from starting (the app degrades
  * gracefully: solo escape rooms and the rest of the site work without these
  * tables; only co-op needs them).
  *
  * `schema.ts` remains the source of truth; keep these statements in sync with
- * the `escape_sessions` / `escape_session_players` definitions there.
+ * the session table definitions there.
  */
 const { Client } = require("pg");
 
@@ -69,6 +74,15 @@ const STATEMENTS = [
   `CREATE INDEX IF NOT EXISTS card_session_players_session_idx ON card_session_players (session_id)`,
 ];
 
+// Activity catalogue rows that aren't synced from elsewhere. Idempotent: new
+// deploys add missing rows but never overwrite admin edits (ON CONFLICT DO
+// NOTHING). Keep in sync with src/lib/card-games/meta.ts.
+const ACTIVITY_SEED = [
+  { slug: "cards-memory-match", title: "Memory Match", emoji: "🧠", desc: "Flip and find the pairs", order: 50 },
+  { slug: "cards-tower-tumble", title: "Tower Tumble", emoji: "🃏", desc: "Climb the piles, empty your hand", order: 51 },
+  { slug: "cards-number-hunt", title: "Number Hunt", emoji: "🔢", desc: "Make the target number", order: 52 },
+];
+
 (async () => {
   const url = process.env.DATABASE_URL;
   if (!url) {
@@ -79,7 +93,15 @@ const STATEMENTS = [
   try {
     await client.connect();
     for (const stmt of STATEMENTS) await client.query(stmt);
-    console.log("[ensure-schema] portal schema ensured");
+    for (const a of ACTIVITY_SEED) {
+      await client.query(
+        `INSERT INTO activities (slug, title, category, emoji, description, live, leaderboard_enabled, sort_order)
+         VALUES ($1, $2, 'free-games', $3, $4, true, true, $5)
+         ON CONFLICT (slug) DO NOTHING`,
+        [a.slug, a.title, a.emoji, a.desc, a.order],
+      );
+    }
+    console.log("[ensure-schema] portal schema + activities ensured");
   } catch (err) {
     console.warn("[ensure-schema] skipped:", err && err.message ? err.message : err);
   } finally {

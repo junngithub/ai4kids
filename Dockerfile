@@ -28,9 +28,10 @@ RUN addgroup -S app \
 COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
-# One-time, idempotent schema bootstrap (CREATE TABLE IF NOT EXISTS) so newer
-# portal tables self-create on deploy. Uses `pg` from the standalone bundle and
-# never blocks boot on failure.
+# One-time, idempotent portal bootstrap so newer features work on deploy:
+# CREATE TABLE IF NOT EXISTS for the escape/card session tables, plus an
+# ON CONFLICT DO NOTHING upsert of the Brain Arcade activity rows (the tiles).
+# Uses `pg` from the standalone bundle and never blocks boot on failure.
 COPY --from=builder /app/scripts/ensure-portal-schema.cjs ./ensure-portal-schema.cjs
 USER app
 EXPOSE 3000
