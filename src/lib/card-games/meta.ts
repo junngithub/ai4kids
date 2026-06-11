@@ -100,6 +100,25 @@ export const CARD_GAMES: CardGameMeta[] = [
       "First to empty their hand wins. Solo: race the clock!",
     ],
   },
+  {
+    slug: "card-showdown",
+    activitySlug: "cards-card-showdown",
+    title: "Card Showdown",
+    emoji: "⭐",
+    tagline: "Clash for victory stars",
+    blurb: "Everyone plays cards in secret, then reveals at once. Highest total wins a star — but hands those cards to the lowest player! First to 3 stars, or last standing, wins.",
+    accent: "bg-bubble/15 text-bubble",
+    ring: "ring-bubble/30",
+    modes: ["versus"],
+    minPlayers: 3,
+    maxPlayers: 4,
+    how: [
+      "Everyone secretly plays ONE or TWO cards at the same time.",
+      "Highest total wins a ⭐ — but gives those cards to the lowest player.",
+      "The lowest player discards the cards they played; everyone else keeps theirs.",
+      "Run out of cards and you're out. First to 3 ⭐ — or last standing — wins!",
+    ],
+  },
 ];
 
 export const CARD_GAME_BY_SLUG: Record<string, CardGameMeta> = Object.fromEntries(
