@@ -15,7 +15,7 @@
 
 AI storytelling · coding · game design · phonics · escape rooms — a gamified learning playground plus live class booking for parents.
 
-[Report Bug](https://github.com/alfredang/ai4kids/issues) · [Request Feature](https://github.com/alfredang/ai4kids/issues)
+**[🚀 Live Site](https://ai4kids.tertiarycourses.com.sg/)** · [Report Bug](https://github.com/alfredang/ai4kids/issues) · [Request Feature](https://github.com/alfredang/ai4kids/issues)
 
 </div>
 
