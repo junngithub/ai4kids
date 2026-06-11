@@ -21,9 +21,12 @@ export type PlayerRef = { id: number; name: string };
 /** A single card. `id` is stable identity (needed for memory + React keys). */
 export type Card = { id: number; v: number };
 
+/** Optional per-game setup knobs chosen by the host (e.g. Memory pair count). */
+export type GameOptions = { pairs?: number };
+
 export interface GameEngine<S> {
   /** Build the initial, fully-dealt state for these players + mode. */
-  init(players: PlayerRef[], mode: GameMode): S;
+  init(players: PlayerRef[], mode: GameMode, opts?: GameOptions): S;
   /** Apply a player's move. Throw `Error(msg)` to reject it. */
   move(state: S, playerId: number, move: unknown): S;
   /** Has the game ended? */
@@ -34,6 +37,10 @@ export interface GameEngine<S> {
   view(state: S, viewerId: number): unknown;
   /** 0–100 completion score for a player once the game is over. */
   scoreFor(state: S, playerId: number): number;
+  /** The learner whose turn it currently is. */
+  currentPlayer(state: S): number;
+  /** Skip an absent player's turn (used when someone leaves mid-game). */
+  skipTurn(state: S, playerId: number): S;
 }
 
 /* ------------------------------------------------------------------ */

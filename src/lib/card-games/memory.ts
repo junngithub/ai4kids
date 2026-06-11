@@ -10,6 +10,7 @@
 import {
   GameEngine,
   GameMode,
+  GameOptions,
   PlayerRef,
   shuffle,
   nextTurn,
@@ -62,13 +63,19 @@ type MemoryMove =
   | { type: "flip"; cardId: number }
   | { type: "next" };
 
-function totalPairs() {
-  return PAIRS;
+/** Pairs in play, derived from the dealt board (set by the host at start). */
+function totalPairs(state: MemoryState) {
+  return state.cards.length / 2;
 }
 
+/** Allowed pair counts (each is a clean grid). */
+export const MEMORY_PAIR_CHOICES = [6, 8, 10, 12] as const;
+
 export const memory: GameEngine<MemoryState> = {
-  init(players: PlayerRef[], mode: GameMode): MemoryState {
-    const chosen = shuffle(CONCEPTS).slice(0, PAIRS);
+  init(players: PlayerRef[], mode: GameMode, opts?: GameOptions): MemoryState {
+    const requested = opts?.pairs ?? PAIRS;
+    const pairs = Math.max(4, Math.min(requested, CONCEPTS.length));
+    const chosen = shuffle(CONCEPTS).slice(0, pairs);
     const cards: MemoryCard[] = [];
     let id = 0;
     chosen.forEach((c, ci) => {
@@ -135,7 +142,7 @@ export const memory: GameEngine<MemoryState> = {
   },
 
   isOver(state): boolean {
-    return Object.keys(state.matchedBy).length >= totalPairs() * 2;
+    return Object.keys(state.matchedBy).length >= totalPairs(state) * 2;
   },
 
   winners(state): number[] {
@@ -168,7 +175,7 @@ export const memory: GameEngine<MemoryState> = {
       mismatch: state.mismatch,
       scores: state.scores,
       flips: state.flips,
-      pairsTotal: totalPairs(),
+      pairsTotal: totalPairs(state),
       pairsFound: Object.keys(state.matchedBy).length / 2,
     };
   },
@@ -177,12 +184,25 @@ export const memory: GameEngine<MemoryState> = {
     if (!this.isOver(state)) return 0;
     if (state.mode === "solo") {
       // Fewer flips = better. Perfect is 2*pairs flips.
-      const perfect = totalPairs() * 2;
+      const perfect = totalPairs(state) * 2;
       const ratio = perfect / Math.max(perfect, state.flips);
       return Math.max(50, Math.round(ratio * 100));
     }
     if (state.mode === "coop") return 100; // cleared the board together
     const ranked = this.winners(state);
     return placeScore(ranked.indexOf(playerId), state.order.length);
+  },
+
+  currentPlayer(state): number {
+    return state.order[state.turn];
+  },
+
+  skipTurn(state, playerId): MemoryState {
+    if (state.order[state.turn] !== playerId) return state;
+    const s: MemoryState = structuredClone(state);
+    s.flipped = []; // drop any half-finished flip the leaver left behind
+    s.mismatch = false;
+    s.turn = nextTurn(s.order, s.turn, []);
+    return s;
   },
 };

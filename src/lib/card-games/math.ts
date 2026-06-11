@@ -229,4 +229,15 @@ export const math: GameEngine<MathState> = {
     if (!this.isOver(state)) return 0;
     return placeScore(this.winners(state).indexOf(playerId), state.order.length);
   },
+
+  currentPlayer(state): number {
+    return state.order[state.turn];
+  },
+
+  skipTurn(state, playerId): MathState {
+    if (state.order[state.turn] !== playerId) return state;
+    const s: MathState = structuredClone(state);
+    s.turn = nextTurn(s.order, s.turn, s.finished);
+    return s;
+  },
 };

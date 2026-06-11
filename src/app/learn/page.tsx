@@ -146,7 +146,7 @@ function CardGamesTile({ count, played }: { count: number; played: number }) {
       </div>
       <h3 className="mt-3 font-fun text-lg font-700 text-slate-800">Brain Arcade</h3>
       <p className="mt-1 flex-1 text-sm text-slate-500">
-        Quick card games — Memory Match, Tower Tumble and Number Hunt. Play solo or with friends.
+        Quick card games, play solo or with friends.
       </p>
       <div className="mt-2 text-xs text-slate-400">
         {played > 0 ? `${played} of ${count} games played` : "Not played yet"}
