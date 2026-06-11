@@ -1,0 +1,29 @@
+import { NextResponse } from "next/server";
+import { z } from "zod";
+import { getPortalSession } from "@/lib/portal-session";
+import { getCardSessionByCode, startGame, buildCardState } from "@/lib/card-session";
+
+const schema = z.object({ code: z.string().min(2).max(12) });
+
+export async function POST(req: Request) {
+  const session = await getPortalSession();
+  if (!session || session.role !== "learner") {
+    return NextResponse.json({ error: "Learners only" }, { status: 403 });
+  }
+  const parsed = schema.safeParse(await req.json().catch(() => null));
+  if (!parsed.success) return NextResponse.json({ error: "Invalid code" }, { status: 400 });
+
+  let game = await getCardSessionByCode(parsed.data.code);
+  if (!game) return NextResponse.json({ error: "No such game" }, { status: 404 });
+  if (game.hostId !== Number(session.id)) {
+    return NextResponse.json({ error: "Only the host can start" }, { status: 403 });
+  }
+  if (game.status === "lobby") {
+    try {
+      game = await startGame(game);
+    } catch (e) {
+      return NextResponse.json({ error: (e as Error).message }, { status: 400 });
+    }
+  }
+  return NextResponse.json({ state: await buildCardState(game, Number(session.id)) });
+}

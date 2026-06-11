@@ -11,6 +11,7 @@ import {
   settings,
 } from "../src/db/schema";
 import { ESCAPE_ROOMS } from "../src/lib/escape-rooms";
+import { CARD_GAMES } from "../src/lib/card-games/meta";
 
 function slug(s: string) {
   return s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
@@ -163,7 +164,15 @@ async function main() {
       live: true,
       desc: r.tagline,
     })),
-    { slug: "free-games", title: "Brain Arcade", category: "free-games", emoji: "🕹️", live: false, desc: "Free fun games (coming soon)." },
+    // Card games — one activity per game (see src/lib/card-games/meta.ts).
+    ...CARD_GAMES.map((g) => ({
+      slug: g.activitySlug,
+      title: g.title,
+      category: "free-games" as const,
+      emoji: g.emoji,
+      live: true,
+      desc: g.tagline,
+    })),
   ];
   for (let i = 0; i < activitySeed.length; i++) {
     const a = activitySeed[i];

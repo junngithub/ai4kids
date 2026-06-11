@@ -40,6 +40,33 @@ const STATEMENTS = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS escape_session_players_uq ON escape_session_players (session_id, learner_id)`,
   `CREATE INDEX IF NOT EXISTS escape_session_players_session_idx ON escape_session_players (session_id)`,
+  // Card-game sessions (memory / discard / math). Mirrors card_sessions /
+  // card_session_players in schema.ts; full game state lives in `state` jsonb.
+  `CREATE TABLE IF NOT EXISTS card_sessions (
+    id serial PRIMARY KEY,
+    code varchar(12) NOT NULL UNIQUE,
+    game_slug varchar(64) NOT NULL,
+    mode varchar(16) NOT NULL DEFAULT 'versus',
+    host_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    status varchar(16) NOT NULL DEFAULT 'lobby',
+    state jsonb,
+    winners jsonb NOT NULL DEFAULT '[]'::jsonb,
+    started_at timestamp,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now()
+  )`,
+  `CREATE INDEX IF NOT EXISTS card_sessions_code_idx ON card_sessions (code)`,
+  `CREATE TABLE IF NOT EXISTS card_session_players (
+    id serial PRIMARY KEY,
+    session_id integer NOT NULL REFERENCES card_sessions(id) ON DELETE CASCADE,
+    learner_id integer NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name varchar(255) NOT NULL,
+    avatar varchar(16),
+    joined_at timestamp NOT NULL DEFAULT now(),
+    last_seen timestamp NOT NULL DEFAULT now()
+  )`,
+  `CREATE UNIQUE INDEX IF NOT EXISTS card_session_players_uq ON card_session_players (session_id, learner_id)`,
+  `CREATE INDEX IF NOT EXISTS card_session_players_session_idx ON card_session_players (session_id)`,
 ];
 
 (async () => {

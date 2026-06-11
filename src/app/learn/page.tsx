@@ -44,6 +44,10 @@ export default async function LearnHome() {
   const escapeRooms = all.filter((a) => a.category === "escape-room");
   const escapePlayed = escapeRooms.filter((a) => bestById.get(a.id) != null).length;
 
+  // Card games (free-games category) likewise collapse into one tile.
+  const cardGames = all.filter((a) => a.category === "free-games");
+  const cardPlayed = cardGames.filter((a) => bestById.get(a.id) != null).length;
+
   return (
     <div>
       {/* Stat banner */}
@@ -77,6 +81,11 @@ export default async function LearnHome() {
           // Bunch all escape rooms into one tile, emitted at the first one.
           if (a.category === "escape-room") {
             return a.id === escapeRooms[0]?.id ? [<EscapeRoomsTile key="escape-hub" count={escapeRooms.length} played={escapePlayed} />] : [];
+          }
+
+          // Bunch all card games into one tile, emitted at the first one.
+          if (a.category === "free-games") {
+            return a.id === cardGames[0]?.id ? [<CardGamesTile key="cards-hub" count={cardGames.length} played={cardPlayed} />] : [];
           }
 
           const cat = CATEGORY_BY_SLUG[a.category];
@@ -116,6 +125,36 @@ export default async function LearnHome() {
         })}
       </div>
     </div>
+  );
+}
+
+/** A single tile on /learn that groups the Brain Arcade card games and links to their hub. */
+function CardGamesTile({ count, played }: { count: number; played: number }) {
+  const cat = CATEGORY_BY_SLUG["free-games"];
+  return (
+    <Link
+      href="/learn/cards"
+      className={`group flex flex-col rounded-3xl bg-white p-6 shadow-sm ring-1 ${cat.ring} transition hover:-translate-y-0.5 hover:shadow-md`}
+    >
+      <div className="flex items-start justify-between">
+        <div className={`inline-flex h-14 w-14 items-center justify-center rounded-2xl text-3xl ${cat.accent}`}>
+          {cat.emoji}
+        </div>
+        <span className="rounded-full bg-bubble/10 px-2.5 py-1 font-fun text-xs font-700 text-bubble ring-1 ring-bubble/20">
+          {count} games
+        </span>
+      </div>
+      <h3 className="mt-3 font-fun text-lg font-700 text-slate-800">Brain Arcade</h3>
+      <p className="mt-1 flex-1 text-sm text-slate-500">
+        Quick card games — Memory Match, Tower Tumble and Number Hunt. Play solo or with friends.
+      </p>
+      <div className="mt-2 text-xs text-slate-400">
+        {played > 0 ? `${played} of ${count} games played` : "Not played yet"}
+      </div>
+      <span className="mt-3 rounded-full bg-coral px-4 py-2.5 text-center font-fun font-700 text-white shadow transition group-hover:scale-105">
+        Play ▶
+      </span>
+    </Link>
   );
 }
 

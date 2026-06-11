@@ -568,3 +568,65 @@ export const escapeSessionPlayersRelations = relations(escapeSessionPlayers, ({ 
     references: [users.id],
   }),
 }));
+
+// --- Card-game sessions (memory / discard / math, solo + multiplayer) ---
+// A shared card game joined with a short code. The full authoritative game
+// state (decks, hands, piles, turn) lives in `state` jsonb; the engine layer
+// owns its shape (see src/lib/card-games). Players are tracked for presence +
+// scoring, mirroring the escape-room session tables.
+export const cardSessions = pgTable(
+  "card_sessions",
+  {
+    id: serial("id").primaryKey(),
+    code: varchar("code", { length: 12 }).notNull().unique(),
+    gameSlug: varchar("game_slug", { length: 64 }).notNull(),
+    mode: varchar("mode", { length: 16 }).notNull().default("versus"), // solo | coop | versus
+    hostId: integer("host_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    status: varchar("status", { length: 16 }).notNull().default("lobby"), // lobby | playing | done
+    state: jsonb("state"), // engine-owned game state (null until started)
+    winners: jsonb("winners").notNull().default([]), // learner ids, best-first
+    startedAt: timestamp("started_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (t) => [index("card_sessions_code_idx").on(t.code)],
+);
+
+export const cardSessionPlayers = pgTable(
+  "card_session_players",
+  {
+    id: serial("id").primaryKey(),
+    sessionId: integer("session_id")
+      .notNull()
+      .references(() => cardSessions.id, { onDelete: "cascade" }),
+    learnerId: integer("learner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    name: varchar("name", { length: 255 }).notNull(),
+    avatar: varchar("avatar", { length: 16 }),
+    joinedAt: timestamp("joined_at").defaultNow().notNull(),
+    lastSeen: timestamp("last_seen").defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex("card_session_players_uq").on(t.sessionId, t.learnerId),
+    index("card_session_players_session_idx").on(t.sessionId),
+  ],
+);
+
+export const cardSessionsRelations = relations(cardSessions, ({ one, many }) => ({
+  host: one(users, { fields: [cardSessions.hostId], references: [users.id] }),
+  players: many(cardSessionPlayers),
+}));
+
+export const cardSessionPlayersRelations = relations(cardSessionPlayers, ({ one }) => ({
+  session: one(cardSessions, {
+    fields: [cardSessionPlayers.sessionId],
+    references: [cardSessions.id],
+  }),
+  learner: one(users, {
+    fields: [cardSessionPlayers.learnerId],
+    references: [users.id],
+  }),
+}));
