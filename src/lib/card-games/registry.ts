@@ -7,6 +7,7 @@ import { memory } from "./memory";
 import { discard } from "./discard";
 import { math } from "./math";
 import { beatdie } from "./beatdie";
+import { showdown } from "./showdown";
 
 // The engines are typed over different state shapes; the session layer treats
 // state as opaque jsonb, so an `unknown`-stated view is the honest contract.
@@ -15,6 +16,7 @@ export const ENGINES: Record<string, GameEngine<unknown>> = {
   "tower-tumble": discard as unknown as GameEngine<unknown>,
   "number-hunt": math as unknown as GameEngine<unknown>,
   "beat-the-die": beatdie as unknown as GameEngine<unknown>,
+  "card-showdown": showdown as unknown as GameEngine<unknown>,
 };
 
 export function getEngine(slug: string): GameEngine<unknown> | undefined {

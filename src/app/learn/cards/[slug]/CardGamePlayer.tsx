@@ -58,7 +58,33 @@ type BeatDieView = {
   finished: number[];
   canBeat: boolean;
 };
-type GameView = MemoryView | DiscardView | MathView | BeatDieView;
+type ShowdownResult = {
+  plays: Record<number, number[]>;
+  sums: Record<number, number>;
+  highId: number | null;
+  lowId: number | null;
+  starTo: number | null;
+  transferred: number[];
+  discarded: number[];
+  eliminatedThisRound: number[];
+};
+type ShowdownView = {
+  kind: "showdown";
+  stars: Record<number, number>;
+  eliminated: number[];
+  active: number[];
+  handCounts: Record<number, number>;
+  yourHand: number[];
+  youEliminated: boolean;
+  yourSelection: number[] | null;
+  committed: Record<number, boolean>;
+  waitingOn: number;
+  lastResult: ShowdownResult | null;
+  starsToWin: number;
+  turnPlayerId: number;
+  yourTurn: boolean;
+};
+type GameView = MemoryView | DiscardView | MathView | BeatDieView | ShowdownView;
 
 async function post(path: string, body: unknown): Promise<{ code?: string; state: CardStateDTO }> {
   const r = await fetch(`/api/learn/cards/${path}`, {
@@ -545,14 +571,21 @@ function SoloClock({
 function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; onMove: (m: unknown) => void }) {
   const game = state.game as GameView;
   const nameById = new Map(state.players.map((p) => [p.learnerId, p.name]));
-  const turnName = game.yourTurn ? "Your turn" : `${nameById.get(game.turnPlayerId) ?? "…"}'s turn`;
+  // Showdown is simultaneous (no turns), so it skips the standard turn banner.
+  const showBanner = state.mode !== "solo" && game.kind !== "showdown";
+  const turnName =
+    game.kind === "showdown"
+      ? ""
+      : game.yourTurn
+        ? "Your turn"
+        : `${nameById.get(game.turnPlayerId) ?? "…"}'s turn`;
 
   return (
     <div className="mt-5">
       {state.mode === "solo" && (
         <SoloClock startedAt={state.startedAt} finishedAt={state.finishedAt} bestMs={state.bestMs} />
       )}
-      {state.mode !== "solo" && (
+      {showBanner && (
         <div
           className={`mb-4 flex flex-wrap items-center justify-between gap-2 rounded-2xl px-4 py-2.5 font-fun font-700 ring-1 ${
             game.yourTurn ? "bg-mint/15 text-emerald-700 ring-mint/30" : "bg-slate-50 text-slate-500 ring-slate-100"
@@ -578,6 +611,9 @@ function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; on
       {game.kind === "discard" && <DiscardBoard view={game} busy={busy} onMove={onMove} />}
       {game.kind === "math" && <MathBoard view={game} busy={busy} onMove={onMove} />}
       {game.kind === "beatdie" && <BeatDieBoard view={game} busy={busy} onMove={onMove} />}
+      {game.kind === "showdown" && (
+        <ShowdownBoard view={game} players={state.players} busy={busy} onMove={onMove} />
+      )}
     </div>
   );
 }
@@ -932,6 +968,129 @@ function BeatDieBoard({ view, busy, onMove }: { view: BeatDieView; busy: boolean
         <p className="mt-2 text-center font-round text-xs text-coral">
           {sum} doesn&apos;t beat {view.die} yet.
         </p>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Card Showdown board (simultaneous secret play)                       */
+/* ------------------------------------------------------------------ */
+function ShowdownBoard({
+  view,
+  players,
+  busy,
+  onMove,
+}: {
+  view: ShowdownView;
+  players: CardStateDTO["players"];
+  busy: boolean;
+  onMove: (m: unknown) => void;
+}) {
+  const [picked, setPicked] = useState<number[]>([]);
+  // Fresh selection each round (our commit clears) + drop stale indices.
+  useEffect(() => {
+    if (view.yourSelection == null) setPicked([]);
+  }, [view.yourSelection]);
+  useEffect(() => {
+    setPicked((p) => p.filter((i) => view.yourHand[i] != null).slice(0, 2));
+  }, [view.yourHand]);
+
+  const nameById = new Map(players.map((p) => [p.learnerId, p.name]));
+  const name = (id: number) => nameById.get(id) ?? "Player";
+  const committed = view.yourSelection != null;
+  const pickedValues = picked.map((i) => view.yourHand[i]).filter((v) => v != null);
+  const sum = pickedValues.reduce((a, b) => a + b, 0);
+  const canPlay = !committed && !view.youEliminated && !busy && pickedValues.length >= 1 && pickedValues.length <= 2;
+  const toggle = (idx: number) =>
+    setPicked((p) => (p.includes(idx) ? p.filter((k) => k !== idx) : p.length >= 2 ? p : [...p, idx]));
+
+  const r = view.lastResult;
+
+  return (
+    <div>
+      {/* Scoreboard */}
+      <div className="flex flex-wrap justify-center gap-2">
+        {players.map((p) => {
+          const out = view.eliminated.includes(p.learnerId);
+          const s = view.stars[p.learnerId] ?? 0;
+          return (
+            <div
+              key={p.learnerId}
+              className={`rounded-2xl px-3 py-2 text-center font-fun ring-1 ${
+                out ? "bg-slate-50 text-slate-300 ring-slate-100" : "bg-white text-slate-700 shadow-sm ring-slate-200"
+              }`}
+            >
+              <div className="text-sm font-700">
+                {p.avatar ?? "🙂"} {p.name}
+                {out ? " ❌" : ""}
+              </div>
+              <div className="text-xs">
+                <span className="text-amber-500">
+                  {"⭐".repeat(s)}
+                  {"☆".repeat(Math.max(0, view.starsToWin - s))}
+                </span>{" "}
+                <span className="text-slate-400">🃏 {view.handCounts[p.learnerId] ?? 0}</span>
+              </div>
+              {!out && view.committed[p.learnerId] && (
+                <div className="text-[10px] font-700 text-emerald-500">locked in</div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Last round summary */}
+      {r && r.starTo != null && r.lowId != null && (
+        <div className="mt-3 rounded-2xl bg-bubble/10 px-4 py-2 text-center font-round text-xs text-slate-600 ring-1 ring-bubble/20">
+          ⭐ {name(r.starTo)} won with {r.transferred.join("+")} and gave it to {name(r.lowId)}, who discarded{" "}
+          {r.discarded.join("+")}.
+          {r.eliminatedThisRound.length > 0 && <> {r.eliminatedThisRound.map(name).join(", ")} ran out! ❌</>}
+        </div>
+      )}
+
+      {/* Your area */}
+      {view.youEliminated ? (
+        <p className="mt-6 text-center font-fun font-700 text-slate-400">You&apos;re out — watching the rest. 👀</p>
+      ) : committed ? (
+        <div className="mt-6 text-center">
+          <p className="font-fun font-700 text-emerald-600">✅ Locked in: {view.yourSelection!.join(" + ")}</p>
+          <p className="mt-1 font-round text-sm text-slate-400">
+            Waiting for {view.waitingOn} more player{view.waitingOn === 1 ? "" : "s"}…
+          </p>
+        </div>
+      ) : (
+        <div className="mt-5">
+          <p className="text-center font-fun font-700 text-slate-700">Secretly play one or two cards</p>
+          <div className="mt-3 flex flex-wrap justify-center gap-2">
+            {view.yourHand.map((card, idx) => {
+              const on = picked.includes(idx);
+              return (
+                <button
+                  key={idx}
+                  onClick={() => toggle(idx)}
+                  disabled={busy}
+                  className={`flex aspect-[3/4] w-14 items-center justify-center rounded-2xl font-fun text-2xl font-700 shadow-sm transition disabled:opacity-50 ${
+                    on ? "scale-[1.06] bg-bubble text-white ring-2 ring-bubble/60" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:scale-[1.03]"
+                  }`}
+                >
+                  {card}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-4 flex justify-center">
+            <button
+              onClick={() => {
+                if (canPlay) onMove({ type: "play", cards: pickedValues });
+              }}
+              disabled={!canPlay}
+              className="rounded-full bg-coral px-8 py-2.5 font-fun font-700 text-white shadow transition hover:scale-105 disabled:opacity-40"
+            >
+              Play{pickedValues.length > 0 ? ` (${sum})` : ""}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );
