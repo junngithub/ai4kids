@@ -245,6 +245,46 @@ export async function maybeSkipAbsent(session: CardSessionRow): Promise<CardSess
   return updated;
 }
 
+/**
+ * Drive a real-time game's clock: resolve an expired answer window / advance to
+ * the next round (engines that expose `tick`). Row-locked + re-ticked under the
+ * lock so concurrent polls can't double-advance. Sets winners + records
+ * completions if the tick ends the game. No-op for turn-based games (no `tick`).
+ */
+export async function maybeTick(session: CardSessionRow): Promise<CardSessionRow> {
+  if (session.status !== "playing" || !session.state) return session;
+  const engine = getEngine(session.gameSlug);
+  if (!engine?.tick) return session;
+  // Cheap pre-check outside the lock — skip the transaction if nothing's due.
+  if (!engine.tick(session.state, Date.now())) return session;
+
+  let updated = session;
+  let becameDone = false;
+  await db.transaction(async (tx) => {
+    const [s] = await tx
+      .select()
+      .from(cardSessions)
+      .where(eq(cardSessions.id, session.id))
+      .for("update");
+    if (!s || s.status !== "playing" || !s.state) return;
+    const next = engine.tick!(s.state, Date.now());
+    if (!next) return; // another poll already advanced it
+    const over = engine.isOver(next);
+    const winners = over ? engine.winners(next) : [];
+    const [u] = await tx
+      .update(cardSessions)
+      .set({ state: next, winners, status: over ? "done" : "playing", updatedAt: new Date() })
+      .where(eq(cardSessions.id, session.id))
+      .returning();
+    if (u) {
+      updated = u;
+      becameDone = over;
+    }
+  });
+  if (becameDone) await recordCardCompletions(updated);
+  return updated;
+}
+
 /** Record a completion for every roster player once the game is done. */
 export async function recordCardCompletions(session: CardSessionRow): Promise<void> {
   const engine = getEngine(session.gameSlug);

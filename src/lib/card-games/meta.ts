@@ -120,6 +120,26 @@ export const CARD_GAMES: CardGameMeta[] = [
       "Run out of cards and you're out. First to 3 ⭐ — or last standing — wins!",
     ],
   },
+  {
+    slug: "matching-colours",
+    activitySlug: "cards-matching-colours",
+    title: "Matching Colours",
+    emoji: "🌈",
+    tagline: "Quick! Tap the right colour",
+    blurb: "Each round the four colours get new numbers. A number is called — race to tap the matching colour the fastest! Most points after 10 rounds wins.",
+    accent: "bg-sky/15 text-sky-600",
+    ring: "ring-sky/30",
+    modes: ["versus"],
+    minPlayers: 2,
+    maxPlayers: 4,
+    how: [
+      "You hold four colour cards: 🟥 🟦 🟩 🟨.",
+      "Each round the colours are tied to the numbers 1–4 — memorise them in the 3-second countdown!",
+      "A number is called. Tap the colour it matches within 5 seconds.",
+      "Fastest correct tap gains 3 points, second fastest gains 2 points. Slower but correct taps gives 1 point. Being wrong or too slow gives 0 points.",
+      "Most points after 10 rounds wins. A tie? A sudden-death round decides it!",
+    ],
+  },
 ];
 
 export const CARD_GAME_BY_SLUG: Record<string, CardGameMeta> = Object.fromEntries(

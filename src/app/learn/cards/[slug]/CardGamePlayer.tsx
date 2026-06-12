@@ -84,7 +84,33 @@ type ShowdownView = {
   turnPlayerId: number;
   yourTurn: boolean;
 };
-type GameView = MemoryView | DiscardView | MathView | BeatDieView | ShowdownView;
+type MatchColoursView = {
+  kind: "matchcolours";
+  colours: { key: string; label: string; hex: string; emoji: string }[];
+  round: number;
+  roundsTotal: number;
+  final: boolean;
+  pool: number[];
+  mapping: number[]; // mapping[i] = colour id tied to number (i + 1)
+  prompt: number;
+  startAt: number;
+  revealAt: number;
+  deadlineAt: number;
+  resolved: boolean;
+  resultUntil: number | null;
+  correctColour: number | null;
+  scores: Record<number, number>;
+  points: Record<number, number> | null;
+  yourPoints: number | null;
+  answered: Record<number, boolean>;
+  yourAnswer: number | null; // colour id, -1 = no answer, null = not yet
+  inRound: boolean;
+  serverNow: number;
+  winner: number | null;
+  turnPlayerId: number;
+  yourTurn: boolean;
+};
+type GameView = MemoryView | DiscardView | MathView | BeatDieView | ShowdownView | MatchColoursView;
 
 async function post(path: string, body: unknown): Promise<{ code?: string; state: CardStateDTO }> {
   const r = await fetch(`/api/learn/cards/${path}`, {
@@ -571,14 +597,15 @@ function SoloClock({
 function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; onMove: (m: unknown) => void }) {
   const game = state.game as GameView;
   const nameById = new Map(state.players.map((p) => [p.learnerId, p.name]));
-  // Showdown is simultaneous (no turns), so it skips the standard turn banner.
-  const showBanner = state.mode !== "solo" && game.kind !== "showdown";
-  const turnName =
-    game.kind === "showdown"
-      ? ""
-      : game.yourTurn
-        ? "Your turn"
-        : `${nameById.get(game.turnPlayerId) ?? "…"}'s turn`;
+  // Showdown and Matching Colours are simultaneous (no turns), so they skip the
+  // standard turn banner.
+  const noBanner = game.kind === "showdown" || game.kind === "matchcolours";
+  const showBanner = state.mode !== "solo" && !noBanner;
+  const turnName = noBanner
+    ? ""
+    : game.yourTurn
+      ? "Your turn"
+      : `${nameById.get(game.turnPlayerId) ?? "…"}'s turn`;
 
   return (
     <div className="mt-5">
@@ -613,6 +640,9 @@ function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; on
       {game.kind === "beatdie" && <BeatDieBoard view={game} busy={busy} onMove={onMove} />}
       {game.kind === "showdown" && (
         <ShowdownBoard view={game} players={state.players} busy={busy} onMove={onMove} />
+      )}
+      {game.kind === "matchcolours" && (
+        <MatchColoursBoard view={game} players={state.players} busy={busy} onMove={onMove} />
       )}
     </div>
   );
@@ -1112,6 +1142,217 @@ function ShowdownBoard({
             </button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Matching Colours board (real-time reaction race)                    */
+/* ------------------------------------------------------------------ */
+function MatchColoursBoard({
+  view,
+  players,
+  busy,
+  onMove,
+}: {
+  view: MatchColoursView;
+  players: CardStateDTO["players"];
+  busy: boolean;
+  onMove: (m: unknown) => void;
+}) {
+  // Correct the client clock to the server's so the reveal + countdown line up
+  // for every player. Recompute only when a fresh poll lands (render-phase, like
+  // the showdown selection reset — avoids a one-frame flash / effect lag).
+  const [offset, setOffset] = useState(0);
+  const lastServerNow = useRef<number | null>(null);
+  if (lastServerNow.current !== view.serverNow) {
+    lastServerNow.current = view.serverNow;
+    setOffset(view.serverNow - Date.now());
+  }
+  // Re-render ~10×/s to drive the countdown and the shrinking timer bar locally.
+  const [, force] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => force((x) => x + 1), 100);
+    return () => clearInterval(id);
+  }, []);
+
+  const eff = Date.now() + offset;
+  const answerMs = view.deadlineAt - view.revealAt;
+  const correctColour = view.mapping[view.prompt - 1];
+  const preview = !view.resolved && eff < view.revealAt;
+  const result = view.resolved || eff >= view.deadlineAt;
+  const answering = !preview && !result;
+  const col = (i: number) => view.colours[i];
+
+  return (
+    <div>
+      {/* Round header */}
+      <div className="mb-3 text-center font-fun text-sm font-700 text-slate-500">
+        {view.final ? `🏁 Sudden-death round ${view.round}` : `Round ${view.round} / ${view.roundsTotal}`}
+      </div>
+
+      {/* Scoreboard */}
+      <div className="flex flex-wrap justify-center gap-2">
+        {players.map((p) => {
+          const inPool = view.pool.includes(p.learnerId);
+          const pts = view.points?.[p.learnerId] ?? 0;
+          return (
+            <div
+              key={p.learnerId}
+              className={`rounded-2xl px-3 py-2 text-center font-fun ring-1 ${
+                view.final && !inPool
+                  ? "bg-slate-50 text-slate-300 ring-slate-100"
+                  : "bg-white text-slate-700 shadow-sm ring-slate-200"
+              }`}
+            >
+              <div className="text-sm font-700">
+                {p.avatar ?? "🙂"} {p.name}
+                {view.final && inPool ? " 🏁" : ""}
+              </div>
+              <div className="text-xs text-slate-500">
+                <span className="font-700 text-slate-700 tabular-nums">{view.scores[p.learnerId] ?? 0}</span> pts
+                {result && pts > 0 && <span className="ml-1 font-700 text-emerald-500">+{pts}</span>}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Stage */}
+      {!view.inRound ? (
+        <p className="mt-8 text-center font-fun font-700 text-slate-400">
+          👀 Watching the sudden-death round…
+        </p>
+      ) : preview ? (
+        /* ---- Preview: memorise the colour↔number mapping ---- */
+        <div className="mt-6">
+          <div className="text-center font-fun text-lg font-700 text-slate-700">Memorise the colours!</div>
+          <div className="mx-auto mt-4 grid max-w-md grid-cols-2 gap-3 sm:grid-cols-4">
+            {[1, 2, 3, 4].map((num) => {
+              const c = col(view.mapping[num - 1]);
+              return (
+                <div
+                  key={num}
+                  className="flex flex-col items-center gap-2 rounded-2xl bg-white p-3 shadow-sm ring-1 ring-slate-100"
+                >
+                  <div className="font-fun text-3xl font-700 tabular-nums text-slate-800">{num}</div>
+                  <div
+                    className="flex h-12 w-full items-center justify-center rounded-xl font-fun text-sm font-700 text-white shadow-inner"
+                    style={{ backgroundColor: c.hex }}
+                  >
+                    {c.emoji} {c.label}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div className="mt-6 text-center">
+            <div className="font-fun text-sm font-600 text-slate-400">Get ready…</div>
+            <div className="font-fun text-6xl font-700 tabular-nums text-coral">
+              {Math.max(1, Math.ceil((view.revealAt - eff) / 1000))}
+            </div>
+          </div>
+        </div>
+      ) : answering ? (
+        /* ---- Answer: a number is called, race to tap the colour ---- */
+        (() => {
+          const youAnswered = view.yourAnswer != null;
+          const frac = Math.max(0, Math.min(1, (view.deadlineAt - eff) / answerMs));
+          return (
+            <div className="mt-6">
+              <div className="text-center">
+                <div className="font-fun text-sm font-600 text-slate-400">Tap the colour for</div>
+                <div className="font-fun text-7xl font-700 leading-none tabular-nums text-slate-900">
+                  {view.prompt}
+                </div>
+              </div>
+              <div className="mx-auto mt-4 h-2.5 max-w-sm overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full rounded-full bg-coral ease-linear"
+                  style={{ width: `${frac * 100}%` }}
+                />
+              </div>
+              {/* Reference strip: the number→colour mapping, so no memorising. */}
+              <div className="mx-auto mt-4 flex max-w-sm flex-wrap justify-center gap-1.5">
+                {[1, 2, 3, 4].map((num) => {
+                  const c = col(view.mapping[num - 1]);
+                  return (
+                    <span
+                      key={num}
+                      className="inline-flex items-center gap-1.5 rounded-full bg-white px-2.5 py-1 font-fun text-xs font-700 text-slate-600 shadow-sm ring-1 ring-slate-100"
+                    >
+                      <span className="tabular-nums">{num}</span>
+                      <span
+                        className="h-3.5 w-3.5 rounded-full ring-1 ring-black/10"
+                        style={{ backgroundColor: c.hex }}
+                      />
+                    </span>
+                  );
+                })}
+              </div>
+              <div className="mx-auto mt-5 grid max-w-sm grid-cols-2 gap-3">
+                {view.colours.map((c, i) => {
+                  const chosen = view.yourAnswer === i;
+                  return (
+                    <button
+                      key={c.key}
+                      onClick={() => onMove({ type: "tap", colour: i })}
+                      disabled={busy || youAnswered}
+                      className={`flex h-20 items-center justify-center rounded-2xl font-fun text-lg font-700 text-white shadow transition disabled:cursor-default ${
+                        chosen
+                          ? "scale-[1.03] ring-4 ring-slate-800/30"
+                          : youAnswered
+                            ? "opacity-40"
+                            : "hover:scale-[1.03]"
+                      }`}
+                      style={{ backgroundColor: c.hex }}
+                    >
+                      {c.emoji} {c.label}
+                    </button>
+                  );
+                })}
+              </div>
+              {youAnswered && view.yourAnswer != null && view.yourAnswer >= 0 && (
+                <p className="mt-4 text-center font-fun font-700 text-slate-500">
+                  Locked in {col(view.yourAnswer).emoji} — waiting for the results…
+                </p>
+              )}
+            </div>
+          );
+        })()
+      ) : (
+        /* ---- Result: reveal the correct colour + this round's points ---- */
+        (() => {
+          const cc = col(correctColour);
+          const you = view.yourAnswer;
+          const youCorrect = you === correctColour;
+          const tallying = !view.resolved;
+          return (
+            <div className="mt-6 text-center">
+              <div className="font-fun text-sm font-600 text-slate-400">Number {view.prompt} was</div>
+              <div
+                className="mx-auto mt-2 inline-flex items-center gap-2 rounded-2xl px-5 py-3 font-fun text-xl font-700 text-white shadow"
+                style={{ backgroundColor: cc.hex }}
+              >
+                {cc.emoji} {cc.label}
+              </div>
+              <div className="mt-4 font-fun font-700">
+                {you == null || you < 0 ? (
+                  <span className="text-slate-400">⏳ Too slow — no points.</span>
+                ) : youCorrect ? (
+                  <span className="text-emerald-600">
+                    ✅ Correct!{!tallying && view.yourPoints ? ` +${view.yourPoints}` : ""}
+                    {!tallying && view.yourPoints === 3 ? " ⚡ Fastest!" : ""}
+                  </span>
+                ) : (
+                  <span className="text-coral">❌ You tapped {col(you).emoji} — no points.</span>
+                )}
+              </div>
+              {tallying && <div className="mt-1 font-round text-xs text-slate-400">Tallying scores…</div>}
+            </div>
+          );
+        })()
       )}
     </div>
   );
