@@ -114,8 +114,9 @@ export const CARD_GAMES: CardGameMeta[] = [
     maxPlayers: 4,
     how: [
       "Everyone secretly plays ONE or TWO cards at the same time.",
-      "Highest total wins a ⭐ — but gives those cards to the lowest player.",
-      "The lowest player discards the cards they played; everyone else keeps theirs.",
+      "Highest total wins a ⭐ — and gives those cards to the lowest player, who discards what they played. Everyone else keeps theirs.",
+      "Tie for lowest? They ALL collect the winning cards. Tie for highest? They each win a ⭐, and the lowest collects every card they played.",
+      "Everyone plays the same total? It's a draw — nothing happens.",
       "Run out of cards and you're out. First to 3 ⭐ — or last standing — wins!",
     ],
   },

@@ -6,6 +6,12 @@
  * Everyone else keeps their cards. Run out of cards and you're eliminated.
  * First to 3 ⭐ — or the last player standing — wins.
  *
+ * Tie rules:
+ *  - All players play the same total → a draw (no stars, no cards move).
+ *  - Several tie for the lowest total → they ALL collect the winning set.
+ *  - Several tie for the highest total → they each win a ⭐ and lose their
+ *    played cards, which the lowest player(s) collect ALL of, combined.
+ *
  * Unlike the other games there is no "turn": all active players commit, and the
  * round resolves once the last one has. `currentPlayer` therefore reports the
  * next player we're still waiting on, so the shared leave-mid-game handling can
@@ -16,11 +22,11 @@ import { GameEngine, GameMode, PlayerRef, placeScore } from "./engine";
 export type ShowdownResult = {
   plays: Record<number, number[]>;
   sums: Record<number, number>;
-  highId: number | null;
-  lowId: number | null;
-  starTo: number | null;
-  transferred: number[]; // cards moved high → low
-  discarded: number[]; // low's own played cards (removed from game)
+  draw: boolean; // every active player played the same total
+  highIds: number[]; // player(s) with the highest total — each won a ⭐
+  lowIds: number[]; // player(s) with the lowest total — each gained the set
+  transferred: number[]; // the single set of cards the lowest player(s) gained
+  discarded: number[]; // cards removed from the game this round
   eliminatedThisRound: number[];
 };
 
@@ -65,46 +71,45 @@ function resolveIfReady(s: ShowdownState): void {
     plays[id] = s.selections[id]!;
     sums[id] = plays[id].reduce((a, b) => a + b, 0);
   }
-
-  // Highest / lowest total. Ties broken by fewer cards played, then turn order.
-  const idx = (id: number) => s.order.indexOf(id);
-  const beats = (a: number, b: number, dir: "high" | "low") => {
-    if (sums[a] !== sums[b]) return dir === "high" ? sums[a] > sums[b] : sums[a] < sums[b];
-    if (plays[a].length !== plays[b].length) return plays[a].length < plays[b].length;
-    return idx(a) < idx(b);
-  };
-  let highId = active[0];
-  let lowId = active[0];
-  for (const id of active) {
-    if (beats(id, highId, "high")) highId = id;
-    if (beats(id, lowId, "low")) lowId = id;
-  }
+  const maxSum = Math.max(...active.map((id) => sums[id]));
+  const minSum = Math.min(...active.map((id) => sums[id]));
+  const highIds = active.filter((id) => sums[id] === maxSum);
+  const lowIds = active.filter((id) => sums[id] === minSum);
 
   const result: ShowdownResult = {
     plays,
     sums,
-    highId: null,
-    lowId: null,
-    starTo: null,
+    draw: false,
+    highIds: [],
+    lowIds: [],
     transferred: [],
     discarded: [],
     eliminatedThisRound: [],
   };
 
-  // Only act when there's a real winner/loser split (not an all-equal tie).
-  if (highId !== lowId) {
-    result.highId = highId;
-    result.lowId = lowId;
-    result.starTo = highId;
-    s.stars[highId] = (s.stars[highId] ?? 0) + 1;
+  if (maxSum === minSum) {
+    // Everyone played the same total — a draw. No stars, no cards move.
+    result.draw = true;
+  } else {
+    result.highIds = highIds;
+    result.lowIds = lowIds;
+    for (const h of highIds) s.stars[h] = (s.stars[h] ?? 0) + 1;
 
-    const highCards = plays[highId];
-    const lowCards = plays[lowId];
-    s.hands[highId] = removeCards(s.hands[highId], highCards) ?? s.hands[highId];
-    s.hands[lowId] = removeCards(s.hands[lowId], lowCards) ?? s.hands[lowId];
-    s.hands[lowId] = [...s.hands[lowId], ...highCards].sort((a, b) => a - b);
-    result.transferred = highCards;
-    result.discarded = lowCards;
+    // The winner(s) lose their played cards; the lowest player(s) collect them.
+    // With a single winner that's just their set; with several tied winners the
+    // lowest player(s) collect ALL of those cards combined.
+    const winningSet = highIds.flatMap((h) => plays[h]);
+    for (const h of highIds) {
+      s.hands[h] = removeCards(s.hands[h], plays[h]) ?? s.hands[h];
+    }
+    result.transferred = winningSet;
+
+    // Each lowest player discards their own played cards and gains the set.
+    for (const l of lowIds) {
+      s.hands[l] = removeCards(s.hands[l], plays[l]) ?? s.hands[l];
+      result.discarded.push(...plays[l]);
+      s.hands[l] = [...s.hands[l], ...winningSet].sort((a, b) => a - b);
+    }
     // Middle players keep their cards (never removed).
   }
 
