@@ -10,6 +10,7 @@ import { eq } from "drizzle-orm";
 import { auth } from "@/lib/auth";
 import { db } from "@/db";
 import { users } from "@/db/schema";
+import { isStaffRole } from "@/lib/admin-role";
 import {
   ADMIN_COOKIE_NAME,
   adminCookieOptions,
@@ -43,6 +44,12 @@ export async function GET(req: Request) {
     return NextResponse.redirect(
       new URL("/admin/login?error=not-authorized", publicBase),
     );
+  }
+  // Only staff get the admin HMAC cookie + an admin destination. A parent/learner
+  // who reached here (e.g. used the admin page's Google button) is sent to their
+  // own dashboard — no admin cookie is minted.
+  if (!isStaffRole(row.role)) {
+    return NextResponse.redirect(new URL("/dashboard", publicBase));
   }
 
   const value = mintAdminSessionValue(row.id, row.email ?? "");

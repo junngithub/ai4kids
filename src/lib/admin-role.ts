@@ -8,8 +8,38 @@
  */
 import { cookies } from "next/headers";
 import { getToken } from "next-auth/jwt";
+import { db } from "@/db";
+import { users } from "@/db/schema";
+import { eq } from "drizzle-orm";
 
 export type AdminRole = "admin" | "editor" | "author";
+
+const STAFF_ROLES: readonly AdminRole[] = ["admin", "editor", "author"];
+
+export function isStaffRole(role: string | null | undefined): role is AdminRole {
+  return STAFF_ROLES.includes(role as AdminRole);
+}
+
+/**
+ * Resolve a user id to their current staff role, or null if they're not staff
+ * (or don't exist). Used to re-verify the HMAC admin cookie against the DB so a
+ * stale cookie (minted before a demotion, or for a non-staff account) can't keep
+ * granting access.
+ */
+export async function staffRoleForUserId(id: number): Promise<AdminRole | null> {
+  if (!Number.isInteger(id)) return null;
+  try {
+    const [row] = await db
+      .select({ role: users.role })
+      .from(users)
+      .where(eq(users.id, id))
+      .limit(1);
+    if (!row) return null;
+    return isStaffRole(row.role) ? row.role : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function getAdminSession(): Promise<{
   role: AdminRole;
@@ -33,18 +63,21 @@ export async function getAdminSession(): Promise<{
           : "authjs.session-token",
     });
     if (!token) return null;
-    const rawRole = typeof token.role === "string" ? token.role : "";
-    // Only staff roles may hold an admin session. Parents/learners (or any
-    // non-staff role) are rejected so they can't reach the back-office even
-    // though they share the same NextAuth session cookie.
-    if (rawRole === "parent" || rawRole === "learner") return null;
-    const role: AdminRole =
-      rawRole === "editor" || rawRole === "author" ? rawRole : "admin";
-    return {
-      role,
-      email: typeof token.email === "string" ? token.email : "",
-      id: typeof token.uid === "string" ? token.uid : "",
-    };
+    const uid = typeof token.uid === "string" ? token.uid : "";
+    const numericId = Number(uid);
+    if (!uid || !Number.isInteger(numericId)) return null;
+    // Never trust the JWT's role claim for privilege — sessions here last 10
+    // years and never refresh, so a stale or blank claim must NOT grant access.
+    // Re-read the role from the DB: this fails CLOSED for non-staff and makes
+    // role changes / revocations take effect on the very next request.
+    const [row] = await db
+      .select({ role: users.role, email: users.email })
+      .from(users)
+      .where(eq(users.id, numericId))
+      .limit(1);
+    if (!row) return null;
+    if (!STAFF_ROLES.includes(row.role as AdminRole)) return null;
+    return { role: row.role as AdminRole, email: row.email ?? "", id: uid };
   } catch {
     return null;
   }

@@ -31,6 +31,13 @@ export async function POST(req: Request) {
   if (!ok) {
     return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
   }
+  // Staff only. Parents/learners have passwords too (kid logins, Google parents
+  // who set one), so a valid password is NOT enough to mint an admin cookie.
+  // Same generic message so this doesn't reveal whether the account exists.
+  const STAFF_ROLES = ["admin", "editor", "author"];
+  if (!STAFF_ROLES.includes(user.role)) {
+    return NextResponse.json({ error: "Invalid email or password" }, { status: 401 });
+  }
 
   const value = mintAdminSessionValue(user.id, user.email ?? email);
   const jar = await cookies();

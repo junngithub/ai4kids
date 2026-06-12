@@ -32,7 +32,9 @@ export const authConfig: NextAuthConfig = {
   callbacks: {
     async jwt({ token, user }) {
       if (user) {
-        token.role = (user as { role?: string }).role ?? "admin";
+        // Fail closed: an unknown/blank role must NOT become admin. Privilege
+        // is re-verified against the DB in getAdminSession regardless.
+        token.role = (user as { role?: string }).role ?? "parent";
         token.uid = user.id;
       }
       return token;
@@ -40,7 +42,7 @@ export const authConfig: NextAuthConfig = {
     async session({ session, token }) {
       if (session.user) {
         session.user.id = (token.uid as string) ?? "";
-        session.user.role = (token.role as string) ?? "admin";
+        session.user.role = (token.role as string) ?? "parent";
       }
       return session;
     },

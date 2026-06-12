@@ -39,7 +39,7 @@ export default async function HomePage() {
             </p>
             <div className="mt-6 flex flex-wrap gap-3">
               <Link
-                href="/programs"
+                href="/free-trial"
                 className="rounded-full bg-coral px-6 py-3 font-fun text-lg font-700 text-white shadow-lg shadow-coral/30 transition hover:scale-105"
               >
                 Book a free trial 🎉
@@ -171,7 +171,7 @@ export default async function HomePage() {
             Book a free trial class today. Spaces are small and fill up fast!
           </p>
           <Link
-            href="/programs"
+            href="/free-trial"
             className="mt-6 inline-block rounded-full bg-white px-8 py-3 font-fun text-lg font-700 text-coral shadow-lg transition hover:scale-105"
           >
             Book a free trial 🎉
