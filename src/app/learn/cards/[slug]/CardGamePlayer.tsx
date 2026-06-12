@@ -61,9 +61,9 @@ type BeatDieView = {
 type ShowdownResult = {
   plays: Record<number, number[]>;
   sums: Record<number, number>;
-  highId: number | null;
-  lowId: number | null;
-  starTo: number | null;
+  draw: boolean;
+  highIds: number[];
+  lowIds: number[];
   transferred: number[];
   discarded: number[];
   eliminatedThisRound: number[];
@@ -988,10 +988,16 @@ function ShowdownBoard({
   onMove: (m: unknown) => void;
 }) {
   const [picked, setPicked] = useState<number[]>([]);
-  // Fresh selection each round (our commit clears) + drop stale indices.
-  useEffect(() => {
-    if (view.yourSelection == null) setPicked([]);
-  }, [view.yourSelection]);
+  const open = view.yourSelection == null && !view.youEliminated;
+  // Clear the selection the instant a new round's selection phase opens. Done
+  // during render (not in an effect) so the cards never flash highlighted from
+  // the previous round before an effect can wipe them.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (wasOpen !== open) {
+    setWasOpen(open);
+    if (open) setPicked([]);
+  }
+  // Safety: drop any index that no longer points at a card after a hand change.
   useEffect(() => {
     setPicked((p) => p.filter((i) => view.yourHand[i] != null).slice(0, 2));
   }, [view.yourHand]);
@@ -1041,11 +1047,26 @@ function ShowdownBoard({
       </div>
 
       {/* Last round summary */}
-      {r && r.starTo != null && r.lowId != null && (
+      {r && (
         <div className="mt-3 rounded-2xl bg-bubble/10 px-4 py-2 text-center font-round text-xs text-slate-600 ring-1 ring-bubble/20">
-          ⭐ {name(r.starTo)} won with {r.transferred.join("+")} and gave it to {name(r.lowId)}, who discarded{" "}
-          {r.discarded.join("+")}.
-          {r.eliminatedThisRound.length > 0 && <> {r.eliminatedThisRound.map(name).join(", ")} ran out! ❌</>}
+          {r.draw ? (
+            <>🤝 Draw — everyone played the same total. No stars this round.</>
+          ) : (
+            <>
+              ⭐ {r.highIds.map(name).join(" & ")}{" "}
+              {r.highIds.length > 1 ? (
+                <>
+                  tied highest — each won a star and discarded; {r.lowIds.map(name).join(" & ")} took {r.transferred.join(" and ")}.
+                </>
+              ) : (
+                <>
+                  won with {r.transferred.join("+")} and gave {r.transferred.join(" and ")} to {r.lowIds.map(name).join(" & ")}, who discarded what they
+                  played.
+                </>
+              )}
+              {r.eliminatedThisRound.length > 0 && <> {r.eliminatedThisRound.map(name).join(", ")} ran out! ❌</>}
+            </>
+          )}
         </div>
       )}
 

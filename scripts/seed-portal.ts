@@ -54,10 +54,11 @@ async function main() {
   });
   console.log(`Parent: ${parent.email} (id=${parent.id}) — password: parent123`);
 
-  // --- Two kids ---
+  // --- Demo kids ---
   const kidsSeed = [
     { name: "Maya Tan", username: "maya-star", age: "7-9", avatar: "👧" },
     { name: "Ethan Tan", username: "ethan-rocket", age: "10-12", avatar: "👦" },
+    { name: "Tony Tan", username: "tony-tiger", age: "8-10", avatar: "👦" },
   ];
   const kidIds: number[] = [];
   for (const k of kidsSeed) {
