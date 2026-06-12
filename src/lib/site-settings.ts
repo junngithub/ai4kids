@@ -57,6 +57,7 @@ export const LEAD_SOURCE_LABELS_KEY = "lead_source_labels";
 
 export const DEFAULT_LEAD_SOURCE_LABELS: Record<string, string> = {
   home: "General Inquiry",
+  "free-trial": "Free Trial",
   "ssg-ato-page": "Courseware (SSG ATO)",
   "tpqa-page": "Courseware (TPQA)",
   "course-dev-page": "Courseware (WSQ Course Dev)",
