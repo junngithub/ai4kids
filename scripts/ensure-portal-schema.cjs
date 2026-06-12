@@ -83,6 +83,7 @@ const ACTIVITY_SEED = [
   { slug: "cards-number-hunt", title: "Number Hunt", emoji: "🔢", desc: "Make the target number", order: 52 },
   { slug: "cards-beat-the-die", title: "Beat the Die", emoji: "🎲", desc: "Roll, then beat it", order: 53 },
   { slug: "cards-card-showdown", title: "Card Showdown", emoji: "⭐", desc: "Clash for victory stars", order: 54 },
+  { slug: "cards-matching-colours", title: "Matching Colours", emoji: "🌈", desc: "Quick! Tap the right colour", order: 55 },
 ];
 
 (async () => {

@@ -4,7 +4,7 @@ import { db } from "@/db";
 import { cardSessionPlayers } from "@/db/schema";
 import { and, eq } from "drizzle-orm";
 import { getPortalSession } from "@/lib/portal-session";
-import { getCardSessionByCode, buildCardState, maybeSkipAbsent } from "@/lib/card-session";
+import { getCardSessionByCode, buildCardState, maybeSkipAbsent, maybeTick } from "@/lib/card-session";
 
 const schema = z.object({ code: z.string().min(2).max(12) });
 
@@ -31,7 +31,9 @@ export async function POST(req: Request) {
       ),
     );
 
-  // Keep the game moving if the player on turn has left mid-game.
-  const fresh = await maybeSkipAbsent(game);
+  // Advance real-time games whose round clock has expired, then keep turn-based
+  // games moving if the player on turn has left mid-game.
+  let fresh = await maybeTick(game);
+  fresh = await maybeSkipAbsent(fresh);
   return NextResponse.json({ state: await buildCardState(fresh, learnerId) });
 }

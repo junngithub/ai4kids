@@ -41,6 +41,13 @@ export interface GameEngine<S> {
   currentPlayer(state: S): number;
   /** Skip an absent player's turn (used when someone leaves mid-game). */
   skipTurn(state: S, playerId: number): S;
+  /**
+   * Optional time-driven advance for real-time games (e.g. a reaction round
+   * whose answer window expired). Return the next state if a timed transition
+   * fired, or `null` if nothing changed. Called on every poll via `maybeTick`.
+   * Turn-based games omit it.
+   */
+  tick?(state: S, now: number): S | null;
 }
 
 /* ------------------------------------------------------------------ */
