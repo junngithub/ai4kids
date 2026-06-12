@@ -5,7 +5,7 @@ import { signIn } from "next-auth/react";
 import Link from "next/link";
 
 export default function LoginPage() {
-  const [tab, setTab] = useState<"kid" | "grownup">("kid");
+  const [tab, setTab] = useState<"kid" | "parent" | "admin">("kid");
   const [identifier, setIdentifier] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -35,18 +35,24 @@ export default function LoginPage() {
           <span aria-hidden>🤖</span> AI <span className="text-coral">Kids</span>
         </Link>
 
-        <div className="mt-6 grid grid-cols-2 gap-2 rounded-full bg-amber-50 p-1 font-fun font-600">
+        <div className="mt-6 grid grid-cols-3 gap-1.5 rounded-full bg-amber-50 p-1 font-fun text-sm font-600">
           <button
             onClick={() => setTab("kid")}
             className={`rounded-full py-2 transition ${tab === "kid" ? "bg-coral text-white shadow" : "text-slate-500"}`}
           >
-            🚀 I'm a Kid
+            🚀 Kid
           </button>
           <button
-            onClick={() => setTab("grownup")}
-            className={`rounded-full py-2 transition ${tab === "grownup" ? "bg-sky-500 text-white shadow" : "text-slate-500"}`}
+            onClick={() => setTab("parent")}
+            className={`rounded-full py-2 transition ${tab === "parent" ? "bg-sky-500 text-white shadow" : "text-slate-500"}`}
           >
-            👋 Parent / Admin
+            👋 Parent
+          </button>
+          <button
+            onClick={() => setTab("admin")}
+            className={`rounded-full py-2 transition ${tab === "admin" ? "bg-slate-700 text-white shadow" : "text-slate-500"}`}
+          >
+            🔐 Admin
           </button>
         </div>
 
@@ -83,10 +89,10 @@ export default function LoginPage() {
               Ask your parent for your username and secret word.
             </p>
           </form>
-        ) : (
+        ) : tab === "parent" ? (
           <div className="mt-6 space-y-4">
             <p className="text-center font-round text-slate-500">
-              Parents and admins sign in with Google.
+              Parents sign in with Google.
             </p>
             <button
               onClick={() => signIn("google", { callbackUrl: "/dashboard" })}
@@ -97,6 +103,21 @@ export default function LoginPage() {
             </button>
             <p className="text-center text-xs text-slate-400">
               New here? Signing in creates your parent account automatically.
+            </p>
+          </div>
+        ) : (
+          <div className="mt-6 space-y-4">
+            <p className="text-center font-round text-slate-500">
+              Staff &amp; admins sign in on the secure admin page.
+            </p>
+            <Link
+              href="/admin/login"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl bg-slate-800 py-3 font-fun font-700 text-white shadow-lg transition hover:bg-slate-900"
+            >
+              🔐 Go to Admin login →
+            </Link>
+            <p className="text-center text-xs text-slate-400">
+              For academy instructors and staff only.
             </p>
           </div>
         )}

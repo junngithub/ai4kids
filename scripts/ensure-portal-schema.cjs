@@ -72,6 +72,9 @@ const STATEMENTS = [
   )`,
   `CREATE UNIQUE INDEX IF NOT EXISTS card_session_players_uq ON card_session_players (session_id, learner_id)`,
   `CREATE INDEX IF NOT EXISTS card_session_players_session_idx ON card_session_players (session_id)`,
+  // Security: never let a user inserted without an explicit role default to
+  // 'admin'. Idempotent — safe to re-run on every boot. Mirrors schema.ts.
+  `ALTER TABLE users ALTER COLUMN role SET DEFAULT 'parent'`,
 ];
 
 // Activity catalogue rows that aren't synced from elsewhere. Idempotent: new

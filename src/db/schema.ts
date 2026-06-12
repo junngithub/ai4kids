@@ -79,7 +79,10 @@ export const users = pgTable(
     username: varchar("username", { length: 64 }), // learner login handle
     passwordHash: text("password_hash"),
     name: varchar("name", { length: 255 }).notNull(),
-    role: roleEnum("role").notNull().default("admin"),
+    // Default to the LEAST-privileged role: a row inserted without an explicit
+    // role must never become admin. Staff/parent/learner are set explicitly at
+    // creation (seed, Google self-provision, admin "add staff").
+    role: roleEnum("role").notNull().default("parent"),
     avatar: text("avatar"), // optional emoji/url for kid profile
     dob: timestamp("dob"), // learner date of birth
     ageGroup: varchar("age_group", { length: 16 }), // e.g. "4-6","7-9","10-12","13-16"
