@@ -52,7 +52,7 @@ export default function LoginPage() {
         <div className="absolute top-0 inset-x-0 h-px bg-gradient-to-r from-transparent via-(--color-cyan) to-transparent" />
         <div>
           <div className="kicker mb-2">[ ADMIN ACCESS ]</div>
-          <h1 className="font-display text-3xl font-extrabold">
+          <h1 className="font-display text-3xl font-extrabold text-white">
             Sign in to <span className="gradient-text">AI Kids Admin</span>
           </h1>
         </div>
@@ -64,7 +64,7 @@ export default function LoginPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             autoComplete="email"
-            className="w-full px-4 py-3 rounded-lg bg-white/3 border border-white/10 focus:outline-none focus:border-(--color-cyan) focus:ring-2 focus:ring-(--color-cyan)/20 transition"
+            className="w-full px-4 py-3 rounded-lg bg-white/3 border border-white/10 text-white placeholder:text-white/40 focus:outline-none focus:border-(--color-cyan) focus:ring-2 focus:ring-(--color-cyan)/20 transition"
           />
         </div>
         <div>
@@ -76,7 +76,7 @@ export default function LoginPage() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               autoComplete="current-password"
-              className="w-full px-4 py-3 pr-12 rounded-lg bg-white/3 border border-white/10 focus:outline-none focus:border-(--color-cyan) focus:ring-2 focus:ring-(--color-cyan)/20 transition"
+              className="w-full px-4 py-3 pr-12 rounded-lg bg-white/3 border border-white/10 text-white placeholder:text-white/40 focus:outline-none focus:border-(--color-cyan) focus:ring-2 focus:ring-(--color-cyan)/20 transition"
             />
             <button
               type="button"
