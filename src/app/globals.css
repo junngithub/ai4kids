@@ -176,7 +176,7 @@
 /* Public / kids default: bright + friendly */
 html, body {
   background-color: var(--color-cream);
-  color: #1e293b;
+  color: #a09aed;
   font-family: var(--font-round), system-ui, sans-serif;
   -webkit-font-smoothing: antialiased;
 }
