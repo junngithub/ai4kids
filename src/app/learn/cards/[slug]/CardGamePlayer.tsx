@@ -815,15 +815,11 @@ function MathBoard({ view, busy, onMove }: { view: MathView; busy: boolean; onMo
 
   return (
     <div>
-      {/* Target + draw pile */}
-      <div className="flex items-center justify-center gap-4">
+      {/* Target */}
+      <div className="flex items-center justify-center">
         <div className="rounded-3xl bg-sky/10 px-6 py-4 text-center ring-1 ring-sky/20">
           <div className="font-round text-xs text-slate-400">make</div>
           <div className="font-fun text-5xl font-700 text-sky-700">{view.target}</div>
-        </div>
-        <div className="flex aspect-[3/4] w-16 flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-grape to-bubble text-white shadow-sm">
-          <span className="font-fun text-2xl font-700">{view.drawCount}</span>
-          <span className="font-round text-[9px] text-white/70">draw</span>
         </div>
       </div>
       <p className="mt-2 text-center font-round text-xs text-slate-400">
@@ -909,8 +905,8 @@ function BeatDieBoard({ view, busy, onMove }: { view: BeatDieView; busy: boolean
 
   return (
     <div>
-      {/* Die + draw pile */}
-      <div className="flex items-center justify-center gap-4">
+      {/* Die */}
+      <div className="flex items-center justify-center">
         <div className="flex h-24 w-24 flex-col items-center justify-center rounded-3xl bg-gradient-to-br from-emerald-400 to-emerald-600 text-white shadow ring-1 ring-emerald-300">
           {rolled ? (
             <>
@@ -920,10 +916,6 @@ function BeatDieBoard({ view, busy, onMove }: { view: BeatDieView; busy: boolean
           ) : (
             <span className="text-4xl">🎲</span>
           )}
-        </div>
-        <div className="flex aspect-[3/4] w-16 flex-col items-center justify-center rounded-2xl bg-gradient-to-br from-grape to-bubble text-white shadow-sm">
-          <span className="font-fun text-2xl font-700">{view.drawCount}</span>
-          <span className="font-round text-[9px] text-white/70">draw</span>
         </div>
       </div>
 
