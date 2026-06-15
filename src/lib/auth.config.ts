@@ -27,7 +27,10 @@ export const authConfig: NextAuthConfig = {
       },
     },
   },
-  pages: { signIn: "/admin/login" },
+  // Public sign-in is the kid/parent page; an OAuth error or any NextAuth
+  // sign-in fallback lands there, NOT on the staff admin page. Admins still
+  // reach /admin/login via the explicit middleware + admin-layout redirects.
+  pages: { signIn: "/login", error: "/login" },
   providers: [],
   callbacks: {
     async jwt({ token, user }) {
