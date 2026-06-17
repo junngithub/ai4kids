@@ -38,8 +38,8 @@ export const CARD_GAMES: CardGameMeta[] = [
     maxPlayers: 4,
     how: [
       "On your turn, flip two cards.",
-      "Match a word with its matching picture (like “plant” and 🌱).",
-      "A match lets you go again; a miss passes the turn.",
+      "Match a word with its matching picture (like “plant” and 🌱) to win the pair.",
+      "Match or miss, your turn then passes to the next player.",
       "Co-op: clear the whole board as a team. Versus: most pairs wins!",
     ],
   },

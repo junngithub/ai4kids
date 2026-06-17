@@ -4,8 +4,8 @@
  *
  * Two sets of cards are laid out shuffled in a grid: a WORD card and an EMOJI
  * card for each concept. A match is a word and its matching emoji (e.g. the
- * word "plant" with 🌱). On your turn you flip two cards; a match keeps your
- * turn, a miss passes it to the next player after a short reveal.
+ * word "plant" with 🌱). On your turn you flip two cards; the turn then passes
+ * to the next player either way (a miss flips both back after a short reveal).
  */
 import {
   GameEngine,
@@ -128,11 +128,12 @@ export const memory: GameEngine<MemoryState> = {
     if (s.flipped.length === 2) {
       const [a, b] = s.flipped.map((id) => s.cards.find((c) => c.id === id)!);
       if (a.concept === b.concept) {
-        // Match — lock the pair, score, keep the turn.
+        // Match — lock the pair and score it, then pass the turn (no extra go).
         s.matchedBy[a.id] = playerId;
         s.matchedBy[b.id] = playerId;
         s.scores[playerId] = (s.scores[playerId] ?? 0) + 1;
         s.flipped = [];
+        s.turn = nextTurn(s.order, s.turn, []);
       } else {
         // Miss — leave both up; client sends "next" to flip back + pass turn.
         s.mismatch = true;
