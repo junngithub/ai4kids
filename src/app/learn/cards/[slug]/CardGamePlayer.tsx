@@ -110,7 +110,70 @@ type MatchColoursView = {
   turnPlayerId: number;
   yourTurn: boolean;
 };
-type GameView = MemoryView | DiscardView | MathView | BeatDieView | ShowdownView | MatchColoursView;
+type MakeTenView = {
+  kind: "maketen";
+  cards: { id: number; value: number }[];
+  cleared: number;
+  goal: number;
+  round: number;
+  roundMs: number;
+  turnPlayerId: number;
+  yourTurn: boolean;
+  finished: number[];
+};
+type WheelView = {
+  kind: "wheel";
+  wheel: string[];
+  targetAnimal: string;
+  targetCount: number;
+  cards: { id: number; counts: Record<string, number> }[];
+  round: number;
+  roundsTotal: number;
+  subround: number;
+  subroundsTotal: number;
+  roundMs: number;
+  lastRound: boolean;
+  wrongPicks: number[];
+  turnPlayerId: number;
+  yourTurn: boolean;
+  finished: number[];
+};
+type OddOneView = {
+  kind: "oddone";
+  animals: string[];
+  cards: { id: number; counts: Record<string, number> }[];
+  round: number;
+  roundsTotal: number;
+  subround: number;
+  subroundsTotal: number;
+  roundMs: number;
+  wrongPicks: number[];
+  turnPlayerId: number;
+  yourTurn: boolean;
+  finished: number[];
+};
+type SeqView = {
+  kind: "sequence";
+  cards: { id: number; letter: string; faceUp: boolean; wrong: boolean }[];
+  order: string[];
+  progress: number;
+  total: number;
+  wrong: boolean;
+  turnPlayerId: number;
+  yourTurn: boolean;
+  finished: number[];
+};
+type GameView =
+  | MemoryView
+  | DiscardView
+  | MathView
+  | BeatDieView
+  | ShowdownView
+  | MatchColoursView
+  | MakeTenView
+  | WheelView
+  | OddOneView
+  | SeqView;
 
 async function post(path: string, body: unknown): Promise<{ code?: string; state: CardStateDTO }> {
   const r = await fetch(`/api/learn/cards/${path}`, {
@@ -490,28 +553,36 @@ function Results({ state, onAgain }: { state: CardStateDTO; onAgain: () => void 
   const youWon = state.winners[0] === state.you;
   const solo = state.mode === "solo";
   const coop = state.mode === "coop";
+  // A solo game that finished with no winner = the player ran out of time.
+  const soloLost = solo && state.winners.length === 0;
 
   // Solo time + personal best. `bestMs` already includes this run, so this run
   // beat (or tied) the record exactly when its time equals the best.
   const start = state.startedAt ? new Date(state.startedAt).getTime() : null;
   const end = state.finishedAt ? new Date(state.finishedAt).getTime() : null;
   const thisMs = start != null && end != null ? end - start : null;
-  const newBest = solo && thisMs != null && state.bestMs != null && thisMs <= state.bestMs;
+  const newBest = solo && !soloLost && thisMs != null && state.bestMs != null && thisMs <= state.bestMs;
 
   return (
     <div className="mt-5 rounded-3xl bg-gradient-to-br from-sunny/30 to-coral/20 p-8 text-center shadow-sm ring-1 ring-amber-100">
-      <div className="text-6xl">{youWon || coop || solo ? "🏆" : "🎉"}</div>
+      <div className="text-6xl">{soloLost ? "😮" : youWon || coop || solo ? "🏆" : "🎉"}</div>
       <h2 className="mt-2 font-fun text-2xl font-700 text-slate-900">
-        {solo
-          ? "You did it!"
-          : coop
-            ? "You cleared it together!"
-            : youWon
-              ? "You win! 🎉"
-              : `${nameById.get(state.winners[0]) ?? "Someone"} wins!`}
+        {soloLost
+          ? "So close!"
+          : solo
+            ? "You did it!"
+            : coop
+              ? "You cleared it together!"
+              : youWon
+                ? "You win! 🎉"
+                : `${nameById.get(state.winners[0]) ?? "Someone"} wins!`}
       </h2>
 
-      {solo && thisMs != null && (
+      {soloLost && (
+        <p className="mt-2 font-round text-slate-500">You ran out of time — give it another go!</p>
+      )}
+
+      {solo && !soloLost && thisMs != null && (
         <div className="mx-auto mt-4 max-w-xs">
           <div className="rounded-2xl bg-white/70 px-5 py-3 font-fun font-700 text-slate-700 shadow-sm">
             <span className="tabular-nums">⏱️ Your time: {fmtTime(thisMs)}</span>
@@ -644,6 +715,387 @@ function Board({ state, busy, onMove }: { state: CardStateDTO; busy: boolean; on
       {game.kind === "matchcolours" && (
         <MatchColoursBoard view={game} players={state.players} busy={busy} onMove={onMove} />
       )}
+      {game.kind === "maketen" && <MakeTenBoard view={game} busy={busy} onMove={onMove} />}
+      {game.kind === "wheel" && <WheelBoard view={game} busy={busy} onMove={onMove} />}
+      {game.kind === "oddone" && <OddOneBoard view={game} busy={busy} onMove={onMove} />}
+      {game.kind === "sequence" && <AlphabetLockBoard view={game} busy={busy} onMove={onMove} />}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Shared bits for the timed solo games                                */
+/* ------------------------------------------------------------------ */
+
+/**
+ * A per-round countdown that restarts whenever `restartKey` changes and fires
+ * `onExpire` once when it hits zero. The board owns the clock (these solo games
+ * have no server tick); on expiry the board POSTs a `timeout` move = a loss.
+ */
+function useRoundTimer(roundMs: number, restartKey: string, enabled: boolean, onExpire: () => void): number {
+  const [remaining, setRemaining] = useState(roundMs);
+  const expireRef = useRef(onExpire);
+  expireRef.current = onExpire;
+  useEffect(() => {
+    if (!enabled) {
+      setRemaining(roundMs);
+      return;
+    }
+    const deadline = Date.now() + roundMs;
+    setRemaining(roundMs);
+    let fired = false;
+    const id = setInterval(() => {
+      const left = Math.max(0, deadline - Date.now());
+      setRemaining(left);
+      if (left <= 0 && !fired) {
+        fired = true;
+        clearInterval(id);
+        expireRef.current();
+      }
+    }, 50);
+    return () => clearInterval(id);
+    // Restart only on a new round identity (roundMs is constant within a round).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restartKey, enabled]);
+  return remaining;
+}
+
+function TimerBar({ remaining, total }: { remaining: number; total: number }) {
+  const frac = Math.max(0, Math.min(1, remaining / Math.max(1, total)));
+  const secs = Math.ceil(remaining / 1000);
+  const urgent = remaining <= 2000;
+  return (
+    <div>
+      <div className="h-2.5 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full rounded-full ${urgent ? "bg-coral" : "bg-sky"}`}
+          style={{ width: `${frac * 100}%` }}
+        />
+      </div>
+      <div className={`mt-1 text-center font-fun text-sm font-700 tabular-nums ${urgent ? "text-coral" : "text-slate-500"}`}>
+        ⏱ {secs}s
+      </div>
+    </div>
+  );
+}
+
+/** Deterministic scatter of a card's animals (seeded by id, stable across renders). */
+function scatter(counts: Record<string, number>, seed: number): string[] {
+  const arr: string[] = [];
+  for (const [a, n] of Object.entries(counts)) for (let i = 0; i < n; i++) arr.push(a);
+  let s = (seed + 1) >>> 0;
+  const rnd = () => {
+    s = (s * 1664525 + 1013904223) >>> 0;
+    return s / 4294967296;
+  };
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [arr[i], arr[j]] = [arr[j], arr[i]];
+  }
+  return arr;
+}
+
+/* ------------------------------------------------------------------ */
+/* Make Ten board (timed number bonds)                                 */
+/* ------------------------------------------------------------------ */
+function MakeTenBoard({ view, busy, onMove }: { view: MakeTenView; busy: boolean; onMove: (m: unknown) => void }) {
+  const [sel, setSel] = useState<number[]>([]);
+  // Selection resets whenever the board changes (a pair cleared, or a retry).
+  useEffect(() => {
+    setSel([]);
+  }, [view.cleared, view.cards.length]);
+
+  const remaining = useRoundTimer(view.roundMs, String(view.round), true, () => onMove({ type: "timeout" }));
+
+  const tap = (id: number) => {
+    if (busy) return;
+    if (sel.includes(id)) {
+      setSel(sel.filter((x) => x !== id));
+      return;
+    }
+    if (sel.length >= 2) return;
+    const next = [...sel, id];
+    if (next.length === 2) {
+      setSel([]);
+      onMove({ type: "clear", cards: next });
+    } else {
+      setSel(next);
+    }
+  };
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between font-fun text-sm font-700 text-slate-500">
+        <span>Round {view.round}/{view.goal}</span>
+        <span>Cleared {view.cleared}/{view.goal}</span>
+      </div>
+      <TimerBar remaining={remaining} total={view.roundMs} />
+      <p className="mt-2 text-center font-round text-xs text-slate-400">Tap two cards that add up to 10.</p>
+      <div className="mx-auto mt-3 grid grid-cols-6 gap-2" style={{ maxWidth: "26rem" }}>
+        {view.cards.map((c) => {
+          const on = sel.includes(c.id);
+          return (
+            <button
+              key={c.id}
+              onClick={() => tap(c.id)}
+              disabled={busy}
+              className={`flex aspect-[3/4] items-center justify-center rounded-xl font-fun text-2xl font-700 shadow-sm transition disabled:opacity-60 ${
+                on ? "scale-[1.06] bg-mint text-white ring-2 ring-mint/60" : "bg-white text-slate-800 ring-1 ring-slate-200 hover:scale-[1.03]"
+              }`}
+            >
+              {c.value}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Animal Count board (spot-the-count, spinning wheel + timer)         */
+/* ------------------------------------------------------------------ */
+function WheelBoard({ view, busy, onMove }: { view: WheelView; busy: boolean; onMove: (m: unknown) => void }) {
+  const viewRef = useRef(view);
+  viewRef.current = view;
+  const [spinning, setSpinning] = useState(!view.lastRound);
+  const [spinIdx, setSpinIdx] = useState(0);
+  const [ready, setReady] = useState(!view.lastRound);
+
+  // Spin the wheel at the start of each round (the last round has one animal, so
+  // it just lands without spinning and gets a "Final Round!" prompt instead).
+  useEffect(() => {
+    const v = viewRef.current;
+    const targetIdx = Math.max(0, v.wheel.indexOf(v.targetAnimal));
+    setReady(!v.lastRound);
+    if (v.lastRound || v.wheel.length <= 1) {
+      setSpinIdx(targetIdx);
+      setSpinning(false);
+      return;
+    }
+    setSpinning(true);
+    const n = v.wheel.length;
+    const steps = n * 3 + targetIdx;
+    let s = 0;
+    let d = 55;
+    let timer: ReturnType<typeof setTimeout>;
+    const step = () => {
+      setSpinIdx(s % n);
+      if (s >= steps) {
+        setSpinIdx(targetIdx);
+        setSpinning(false);
+        return;
+      }
+      s += 1;
+      d += 7; // decelerate
+      timer = setTimeout(step, d);
+    };
+    timer = setTimeout(step, d);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view.round]);
+
+  const remaining = useRoundTimer(
+    view.roundMs,
+    `${view.round}-${view.subround}`,
+    !spinning && ready,
+    () => onMove({ type: "timeout" }),
+  );
+
+  return (
+    <div>
+      <div className="mb-3 font-fun text-sm font-700 text-slate-500">
+        Round {view.round}/{view.roundsTotal} · Pick {view.subround}/{view.subroundsTotal}
+      </div>
+
+      {/* The wheel — a strip of the remaining animals, one highlighted. */}
+      <div className="flex h-16 items-center justify-center gap-2">
+        {view.wheel.map((a, i) => {
+          const on = i === spinIdx;
+          return (
+            <div
+              key={a}
+              className={`flex items-center justify-center rounded-2xl transition-all ${
+                on ? "h-14 w-14 bg-coral/20 text-3xl ring-2 ring-coral/50" : "h-11 w-11 bg-slate-50 text-2xl"
+              }`}
+            >
+              {a}
+            </div>
+          );
+        })}
+      </div>
+
+      {spinning ? (
+        <p className="mt-4 text-center font-fun font-700 text-slate-400">Choosing an animal…</p>
+      ) : !ready ? (
+        <div className="mt-4 rounded-3xl bg-white p-6 text-center shadow-sm ring-1 ring-slate-100">
+          <div className="text-5xl">🏁</div>
+          <div className="mt-2 font-fun text-xl font-700 text-slate-800">Final Round!</div>
+          <p className="mt-1 font-round text-sm text-slate-500">
+            Just one animal left — {view.targetAnimal}. Get this card right to win!
+          </p>
+          <button
+            onClick={() => setReady(true)}
+            className="mt-4 rounded-full bg-coral px-6 py-2.5 font-fun font-700 text-white shadow transition hover:scale-105"
+          >
+            I&apos;m ready! ▶
+          </button>
+        </div>
+      ) : (
+        <div className="mt-3">
+          <div className="flex items-center justify-center gap-2">
+            <span className="font-round text-sm text-slate-500">Find the card with</span>
+            <span className="rounded-xl bg-coral/15 px-2.5 py-1 font-fun text-lg font-700 text-coral">
+              {view.targetCount} {view.targetAnimal}
+            </span>
+          </div>
+          <div className="mt-3">
+            <TimerBar remaining={remaining} total={view.roundMs} />
+          </div>
+          {view.wrongPicks.length > 0 && (
+            <p className="mt-1 text-center font-fun text-xs font-700 text-coral">
+              ❌ no more chances left — choose carefully!
+            </p>
+          )}
+          <div className="mt-3 grid grid-cols-2 gap-3">
+            {view.cards.map((c) => {
+              const wrong = view.wrongPicks.includes(c.id);
+              const emojis = scatter(c.counts, c.id);
+              return (
+                <button
+                  key={c.id}
+                  onClick={() => onMove({ type: "pick", cardId: c.id })}
+                  disabled={busy || wrong}
+                  className={`flex min-h-[6rem] items-center justify-center rounded-2xl p-3 text-center text-2xl leading-relaxed shadow-sm ring-1 transition ${
+                    wrong ? "bg-coral/10 ring-coral/40" : "bg-white ring-slate-200 hover:scale-[1.02]"
+                  }`}
+                >
+                  {emojis.length ? emojis.join(" ") : "—"}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Odd One Out board (spot-the-difference + timer)                     */
+/* ------------------------------------------------------------------ */
+function OddOneBoard({ view, busy, onMove }: { view: OddOneView; busy: boolean; onMove: (m: unknown) => void }) {
+  const remaining = useRoundTimer(
+    view.roundMs,
+    `${view.round}-${view.subround}`,
+    true,
+    () => onMove({ type: "timeout" }),
+  );
+
+  return (
+    <div>
+      <div className="mb-2 font-fun text-sm font-700 text-slate-500">
+        Round {view.round}/{view.roundsTotal} · Pick {view.subround}/{view.subroundsTotal}
+      </div>
+      <p className="text-center font-fun text-lg font-700 text-slate-800">Tap the card that&apos;s different</p>
+      <div className="mt-3">
+        <TimerBar remaining={remaining} total={view.roundMs} />
+      </div>
+      {view.wrongPicks.length > 0 && (
+        <p className="mt-1 text-center font-fun text-xs font-700 text-coral">❌ one mistake — look closely!</p>
+      )}
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        {view.cards.map((c) => {
+          const wrong = view.wrongPicks.includes(c.id);
+          // Canonical order (no scatter): the matching cards render identically,
+          // so the odd one stands out.
+          const emojis = Object.entries(c.counts).flatMap(([a, n]) => Array.from({ length: n }, () => a));
+          return (
+            <button
+              key={c.id}
+              onClick={() => onMove({ type: "pick", cardId: c.id })}
+              disabled={busy || wrong}
+              className={`flex min-h-[6rem] items-center justify-center rounded-2xl p-3 text-center text-2xl leading-relaxed shadow-sm ring-1 transition ${
+                wrong ? "bg-coral/10 ring-coral/40" : "bg-white ring-slate-200 hover:scale-[1.02]"
+              }`}
+            >
+              {emojis.length ? emojis.join(" ") : "—"}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Alphabet Lock board (flip 9 letters in order)                       */
+/* ------------------------------------------------------------------ */
+function AlphabetLockBoard({ view, busy, onMove }: { view: SeqView; busy: boolean; onMove: (m: unknown) => void }) {
+  // After a wrong flip, show the letter briefly, then flip everything back down.
+  useEffect(() => {
+    if (!view.wrong) return;
+    const t = setTimeout(() => onMove({ type: "hide" }), 900);
+    return () => clearTimeout(t);
+  }, [view.wrong, onMove]);
+
+  const locked = busy || view.wrong;
+
+  return (
+    <div>
+      <p className="text-center font-fun text-lg font-700 text-slate-800">Flip the letters in ABC order</p>
+
+      {/* The ordered ladder: done letters filled, the next one outlined. */}
+      <div className="mt-3 flex flex-wrap justify-center gap-1.5">
+        {view.order.map((l, i) => {
+          const done = i < view.progress;
+          const next = i === view.progress && !view.wrong;
+          return (
+            <span
+              key={i}
+              className={`flex h-7 w-7 items-center justify-center rounded-lg font-fun text-sm font-700 ${
+                done
+                  ? "bg-mint text-white"
+                  : next
+                    ? "bg-sky/15 text-sky-700 ring-2 ring-sky/40"
+                    : "bg-slate-50 text-slate-300"
+              }`}
+            >
+              {l}
+            </span>
+          );
+        })}
+      </div>
+
+      {/* The 3×3 grid. */}
+      <div className="mx-auto mt-4 grid max-w-xs grid-cols-3 gap-2.5">
+        {view.cards.map((c) => {
+          const up = c.faceUp;
+          const correct = up && !c.wrong;
+          return (
+            <button
+              key={c.id}
+              onClick={() => onMove({ type: "flip", cardId: c.id })}
+              disabled={locked || up}
+              className={`flex aspect-square items-center justify-center rounded-2xl font-fun text-3xl font-700 shadow-sm transition ${
+                c.wrong
+                  ? "bg-coral/15 text-coral ring-2 ring-coral/40"
+                  : correct
+                    ? "bg-white text-emerald-600 ring-2 ring-mint/50"
+                    : up
+                      ? "bg-white text-slate-800 ring-1 ring-slate-200"
+                      : "bg-gradient-to-br from-sky to-grape text-white hover:scale-[1.03]"
+              }`}
+            >
+              {up ? c.letter : <span className="text-white/60">★</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      <p className="mt-3 text-center font-fun text-sm font-700 text-slate-500">
+        {view.progress}/{view.total} in order
+      </p>
     </div>
   );
 }

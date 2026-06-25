@@ -294,14 +294,17 @@ export async function recordCardCompletions(session: CardSessionRow): Promise<vo
     .select({ learnerId: cardSessionPlayers.learnerId })
     .from(cardSessionPlayers)
     .where(eq(cardSessionPlayers.sessionId, session.id));
-  // Solo time-attack: store the elapsed ms so we can track personal bests.
-  const timeMs =
+  // Solo time-attack: store the elapsed ms so we can track personal bests — but
+  // only for a WIN. A timed-out loss (winners is empty) must not poison the best.
+  const winners = (session.winners as number[]) ?? [];
+  const elapsedMs =
     session.mode === "solo" && session.startedAt
       ? Math.max(0, session.updatedAt.getTime() - session.startedAt.getTime())
       : undefined;
   await Promise.all(
-    rows.map((p) =>
-      recordCompletion({
+    rows.map((p) => {
+      const timeMs = elapsedMs != null && winners.includes(p.learnerId) ? elapsedMs : undefined;
+      return recordCompletion({
         learnerId: p.learnerId,
         activitySlug: meta.activitySlug,
         score: engine.scoreFor(session.state, p.learnerId),
@@ -312,8 +315,8 @@ export async function recordCardCompletions(session: CardSessionRow): Promise<vo
           coop: session.mode !== "solo",
           ...(timeMs != null ? { timeMs } : {}),
         },
-      }).catch(() => {}),
-    ),
+      }).catch(() => {});
+    }),
   );
 }
 

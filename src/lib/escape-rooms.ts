@@ -14,7 +14,7 @@
  * to a route at /learn/escape-room/<slug>.
  */
 
-import { HONESTY_MAZES, HISTORY_MAZES, type MazeVariant } from "./maze-pool";
+import { HONESTY_MAZES, type MazeVariant } from "./maze-pool";
 
 // TODO: Make the rooms more engaging and less repetitive. Every room currently
 // follows the same 4-station mcq → order → code → wordsearch template with the
@@ -61,6 +61,13 @@ export type EscapeRoomPuzzle =
       emoji?: string;
       /** Words to find (letters only); a grid is generated around them. */
       words: string[];
+      /**
+       * Words shown as `?` in the to-find list (never spelled out and never lit by
+       * a station). The player must work out what they are from a clue elsewhere
+       * (e.g. the room note) and still find them in the grid. Unlike a provider-gated
+       * word these stay searchable and don't keep the grid scrambled.
+       */
+      secret?: string[];
       /** Optional grid size; defaults to fit the longest word (min 7). */
       size?: number;
       /**
@@ -141,6 +148,38 @@ export type EscapeRoomPuzzle =
       learn: string;
     }
   | {
+      /**
+       * Trail-map maze: read a map's ORDERED route of landmarks, then walk the
+       * hero through the maze stepping on those landmarks in that exact order
+       * before reaching the gate. Reuses the `maze` grid format (`#`/`.`/`S`/`G`)
+       * and the same arrow move-pad. Fog of war hides unexplored cells, and the
+       * route order stays locked until the `unlockedBy` station (the map) is solved.
+       */
+      kind: "trailmaze";
+      prompt: string;
+      emoji?: string;
+      /**
+       * Station id that must be solved before the route order is revealed (e.g.
+       * the Trail Map word search). Until then the maze stays locked and the map
+       * strip shows `?` — you have to read the map to learn which way to walk.
+       */
+      unlockedBy?: string;
+      /** Maze rows of single chars: `#` wall, `.` path, `S` start, `G` gate. */
+      grid: string[];
+      /** Landmarks dropped on path cells (0-indexed [row, col] + emoji). */
+      landmarks: { at: [number, number]; emoji: string }[];
+      /** The map's route: landmark emoji to step on, in this exact order. */
+      route: string[];
+      /** Emoji drawn on the gate / goal cell (default 🚪). */
+      goalEmoji?: string;
+      /** Caption under the maze while walking (default mentions the map order). */
+      caption?: string;
+      /** Caption shown once the trail is walked in full (default map wording). */
+      wonText?: string;
+      hint: string;
+      learn: string;
+    }
+  | {
       kind: "fair";
       prompt: string;
       emoji?: string;
@@ -150,6 +189,64 @@ export type EscapeRoomPuzzle =
       treat: string;
       /** Total treats to share out (should divide evenly among the animals). */
       total: number;
+      hint: string;
+      learn: string;
+    }
+  | {
+      /**
+       * Acrostic crossword (ported from the Android `Crossword`): drag/tap each
+       * answer into its numbered row; the letters down `secretCol` spell a
+       * hidden word. Solved when every row holds its matching word.
+       */
+      kind: "crossword";
+      prompt: string;
+      emoji?: string;
+      rows: {
+        /** Clue number shown on the first cell. */
+        num: number;
+        /** The answer placed in this row. */
+        word: string;
+        /** Starting grid column (0-indexed) so the words form an acrostic. */
+        offset: number;
+        /** Short clue shown in the tray legend. */
+        clue?: string;
+      }[];
+      /** Grid column whose letters (top→bottom) spell the secret word. */
+      secretCol: number;
+      /** The secret word the column spells (for the review/learn copy). */
+      secret: string;
+      hint: string;
+      learn: string;
+    }
+  | {
+      /**
+       * Unscramble (ported from the Android `Unscramble`): tap the shuffled
+       * letter tiles in order to spell each word; words are solved in sequence.
+       */
+      kind: "unscramble";
+      prompt: string;
+      emoji?: string;
+      /** Words to unscramble, in order (e.g. ["SINGA", "PURA"]). */
+      words: string[];
+      /** Optional clue per word (parallel to `words`). */
+      clues?: string[];
+      hint: string;
+      learn: string;
+    }
+  | {
+      /**
+       * Symbol lock (ported from the Android `SymbolLock`): a letter→symbol key
+       * is shown; tap the symbols in order to spell the secret `word`.
+       */
+      kind: "symbol-lock";
+      prompt: string;
+      emoji?: string;
+      /** The secret word to spell out in symbols (e.g. "LION"). */
+      word: string;
+      /** Symbol palette (emoji); the first distinct-letter count become the key. */
+      symbols?: string[];
+      /** Extra non-answer symbols mixed into the palette. */
+      decoys?: number;
       hint: string;
       learn: string;
     };
@@ -247,6 +344,90 @@ export type Decor = {
   float?: boolean;
 };
 
+/* ------------------------------------------------------------------ */
+/* Navigable room-grid layout (top-down rooms + walls + free movement) */
+/* ------------------------------------------------------------------ */
+
+/** One room on the grid. A puzzle room hosts a Station's machine by id. */
+export type GridCell = {
+  id: string;
+  label: string;
+  gx: number;
+  gy: number;
+  gw?: number; // grid width in cells (default 1)
+  gh?: number; // grid height in cells (default 1)
+  /** Station whose puzzle "machine" stands in this room. */
+  stationId?: string;
+  role?: "spawn" | "puzzle" | "exit";
+  /** Lock this room's machine until this station id is solved. */
+  requires?: string;
+  /** Lock this room's machine until every listed station id is solved. */
+  requiresAll?: string[];
+};
+
+/**
+ * A world item the player can pick up and carry between rooms. Ported from the
+ * Android escape room's carry mechanic (`EscapeGdxGame.kt`, `doAction()`).
+ */
+export type CarryItem = {
+  id: string;
+  emoji: string;
+  label: string;
+  /** StationIcon name override (defaults to the station's icon, or a bottle). */
+  icon?: string;
+  /**
+   * charge/direct mode: the station this item belongs to — the charger you carry
+   * a loose core to (charge mode), or the gallery it sits in (direct mode).
+   */
+  station?: string;
+  /** recycle mode: the room the bottle starts scattered in. */
+  home?: string;
+};
+
+/**
+ * How a room's carriable items behave, mirroring the three Android levels:
+ *  - "charge"  (kindness-castle / Tower): loose cores sit in `coreRoom`; carry
+ *    each to its solved charger station to CHARGE it, then to `suitRoom` to
+ *    DELIVER. The suit's exit stays locked until every core is delivered.
+ *  - "direct"  (sg-history / Vault): each artefact rests in its own gallery and
+ *    is pickable only once that gallery is solved; carry it straight to
+ *    `suitRoom` (the Time Capsule) to PLACE it. No charge step.
+ *  - "recycle" (green-lab / Annex): bottles scatter across their `home` rooms;
+ *    WASH each at the sink in `sinkRoom`, then DEPOSIT at the recycler in
+ *    `depositRoom`. `gateRoom`'s puzzle stays locked until every bottle is in.
+ */
+export type CarryConfig =
+  | { mode: "charge"; items: CarryItem[]; coreRoom: string; suitRoom: string }
+  | { mode: "direct"; items: CarryItem[]; suitRoom: string }
+  | { mode: "recycle"; items: CarryItem[]; sinkRoom: string; depositRoom: string; gateRoom: string };
+
+/** A read-only clue / "lab note" object placed in a room. */
+export type RoomNote = {
+  id: string;
+  room: string;
+  emoji: string;
+  title: string;
+  body?: string;
+  /** Optional small diagram keyed by name (e.g. "crossing", "map", "coremap"). */
+  art?: "crossing" | "coremap";
+};
+
+/** The grid of rooms, walls and world objects for a navigable escape room. */
+export type RoomLayout = {
+  cols: number;
+  rows: number;
+  cells: GridCell[];
+  /** Connected room-id pairs — a doorway gap opens in their shared wall. */
+  doors: [string, string][];
+  /** Room the character spawns in. */
+  spawn: string;
+  /** Room hosting the final lock (the room's `exit` mechanism). */
+  exit: string;
+  /** Optional pick-up-and-carry mechanic (cores / artefacts / bottles). */
+  carry?: CarryConfig;
+  notes?: RoomNote[];
+};
+
 export type EscapeRoom = {
   /** Route param, e.g. "robot-lab" → /learn/escape-room/robot-lab */
   slug: string;
@@ -280,6 +461,12 @@ export type EscapeRoom = {
   stations: Station[];
   /** Optional special exit mechanism (otherwise: solve all, walk out). */
   exit?: RoomCipherExit | RoomUnscrambleExit;
+  /**
+   * Optional navigable room-grid layout. When present, the room is played as a
+   * top-down map of rooms + walls with free movement (see RoomMap); when absent
+   * it falls back to the legacy single-scene side view.
+   */
+  layout?: RoomLayout;
 };
 
 export const ESCAPE_ROOMS: EscapeRoom[] = [
@@ -402,6 +589,41 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         },
       },
     ],
+    // 3×3 with a wide central hub ("Main Lab") and a tall Word Display; the exit
+    // keypad is reachable only via the Control Panel or Word Display (not the
+    // hub) so the route isn't trivial. Mirrors the Android Robot Lab grid.
+    layout: {
+      cols: 4,
+      rows: 2,
+      cells: [
+        { id: "entrance", label: "Entrance", gx: 0, gy: 0, role: "spawn" },
+        { id: "atrium", label: "Main Lab", gx: 1, gy: 0, gw: 2 },
+        { id: "exit", label: "Exit Keypad", gx: 3, gy: 0, role: "exit" },
+        { id: "decoder", label: "Symbol Decoder", gx: 0, gy: 1, stationId: "decoder", role: "puzzle" },
+        { id: "robot", label: "Robot Helper", gx: 1, gy: 1, stationId: "robot", role: "puzzle" },
+        { id: "panel", label: "Control Panel", gx: 2, gy: 1, stationId: "panel", role: "puzzle" },
+        { id: "poster", label: "Word Display", gx: 3, gy: 1, stationId: "poster", role: "puzzle" },
+      ],
+      doors: [
+        ["entrance", "atrium"],
+        ["entrance", "decoder"],
+        ["atrium", "robot"],
+        ["atrium", "panel"],
+        ["panel", "poster"],
+        ["poster", "exit"],
+      ],
+      spawn: "entrance",
+      exit: "exit",
+      notes: [
+        {
+          id: "lab-note",
+          room: "atrium",
+          emoji: "📋",
+          title: "Lab Note",
+          art: "crossing",
+        },
+      ],
+    },
   },
   {
     slug: "kindness-castle",
@@ -501,6 +723,55 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         },
       },
     ],
+    // 2×4 tower with wide foyer + landing and a snake-path door set — you wind
+    // foyer → fairness → honesty → landing → kindness → suit, so adjacent rooms
+    // are NOT all connected. Cores live on the wide Landing. Mirrors the Android
+    // Tower grid.
+    layout: {
+      cols: 4,
+      rows: 2,
+      cells: [
+        { id: "foyer", label: "Foyer", gx: 0, gy: 0, gh: 2, role: "spawn" },
+        { id: "honesty", label: "Honesty Charger", gx: 1, gy: 0, stationId: "honesty", role: "puzzle" },
+        { id: "landing", label: "Core Landing", gx: 2, gy: 0, gh: 2 },
+        { id: "attic", label: "The Suit", gx: 3, gy: 0, role: "exit" },
+        { id: "fairness", label: "Fairness Charger", gx: 1, gy: 1, stationId: "fairness", role: "puzzle" },
+        { id: "kindness", label: "Kindness Charger", gx: 3, gy: 1, stationId: "kindness", role: "puzzle" },
+      ],
+      doors: [
+        ["foyer", "fairness"],
+        ["fairness", "honesty"],
+        ["honesty", "landing"],
+        ["landing", "kindness"],
+        ["kindness", "attic"],
+      ],
+      spawn: "foyer",
+      exit: "attic",
+      // Loose cores sit on the Landing. Carry each to its charger station (once
+      // solved) to charge it, then ferry the charged core to the Suit.
+      carry: {
+        mode: "charge",
+        coreRoom: "landing",
+        suitRoom: "attic",
+        // The loose cores look identical (no colour / label) until charged — the
+        // Landing note hints which core, by position, belongs to which charger.
+        items: [
+          { id: "core-kindness", emoji: "⚪", label: "core", station: "kindness" },
+          { id: "core-honesty", emoji: "⚪", label: "core", station: "honesty" },
+          { id: "core-fairness", emoji: "⚪", label: "core", station: "fairness" },
+        ],
+      },
+      notes: [
+        {
+          id: "delivery-map",
+          room: "landing",
+          emoji: "🗺️",
+          title: "Suit Manual",
+          body: "The power cores look exactly alike — but each is numbered. This map shows which charger each numbered core belongs to. Carry each core to its charger, solve the puzzle to charge it, then bring all three to the Suit!",
+          art: "coremap",
+        },
+      ],
+    },
   },
   {
     slug: "green-lab",
@@ -615,6 +886,51 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         },
       },
     ],
+    // 3×3 (with two void cells, like the Android Annex): a wide Solar Panel and
+    // a tall Recycling Plant. Three bottles must be washed AND recycled at the
+    // Recycling Plant before the exit decoder will open.
+    layout: {
+      cols: 4,
+      rows: 2,
+      cells: [
+        { id: "lobby", label: "Lobby", gx: 0, gy: 0, role: "spawn" },
+        { id: "panel", label: "Solar Panel", gx: 1, gy: 0, gw: 2, stationId: "panel", role: "puzzle" },
+        { id: "exit", label: "Exit Decoder", gx: 3, gy: 0, role: "exit" },
+        { id: "bins", label: "Recycling Plant", gx: 0, gy: 1, gw: 2, stationId: "bins", role: "puzzle" },
+        { id: "circuit", label: "Power Circuit", gx: 2, gy: 1, gw: 2, stationId: "circuit", role: "puzzle" },
+      ],
+      doors: [
+        ["lobby", "panel"],
+        ["lobby", "bins"],
+        ["bins", "circuit"],
+        ["circuit", "exit"],
+      ],
+      spawn: "lobby",
+      exit: "exit",
+      // Three bottles scatter across the plant. Wash each at the sink in the
+      // Recycling Plant, recycle it at the recycler in the opposite corner, then
+      // the gated Power Circuit unlocks.
+      carry: {
+        mode: "recycle",
+        sinkRoom: "bins",
+        depositRoom: "bins",
+        gateRoom: "circuit",
+        items: [
+          { id: "bottle-a", emoji: "🍶", label: "Bottle", icon: "bottle", home: "lobby" },
+          { id: "bottle-b", emoji: "🍶", label: "Bottle", icon: "bottle", home: "panel" },
+          { id: "bottle-c", emoji: "🍶", label: "Bottle", icon: "bottle", home: "bins" },
+        ],
+      },
+      notes: [
+        {
+          id: "plant-note",
+          room: "lobby",
+          emoji: "📋",
+          title: "Notice",
+          body: "There are stray bottles around the plant. Recycle them the right way!",
+        },
+      ],
+    },
   },
   {
     slug: "sg-history",
@@ -641,85 +957,109 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     ],
     character: "🧑‍🎓",
     intro:
-      "The History Vault is sealed by an ancient stone tablet carved in mystery symbols. Explore old Singapore — answer the Merlion, sort the old days from today, and wind through the river lanes — to light up the tablet's key, then decode the secret word to escape!",
-    outro: "You decode the tablet and the vault grinds open — the Merlion roars hello! 🦁",
-    // Stone-tablet door: three discoveries light up the cipher's pieces.
-    exit: {
-      kind: "cipher",
-      // Old-Singapore legend; the answer's symbols (I,S,L,A,N,D) sit at scattered
-      // positions so the player must hunt each one down in the key.
-      symbols: ["🦁", "🏛️", "🛺", "📜", "🕰️", "🇸🇬", "⚓", "🏘️", "🚢", "⛩️", "👑", "🗺️", "🪔", "🎆"],
-      letters: ["L", "T", "A", "R", "I", "S", "N", "O", "D", "H", "K", "E", "U", "G"],
-      coded: ["🕰️", "🇸🇬", "🦁", "🛺", "⚓", "🚢"], // I S L A N D
-      answer: "ISLAND",
-      revealSymbols: "river", // river maze → the tablet's symbol key
-      revealLetters: "timeline", // sort the eras → the tablet's letter key
-      revealCoded: "merlion", // the Merlion → the coded carving itself
-      progressHint: "🪨 Light up the stone tablet's three pieces",
-      readyHint: "🔣 Tablet ready — decode the secret word to open the vault!",
-    },
+      "The History Vault is locked! Explore old Singapore — answer the Merlion, trace the river lanes and sort the old days from today. Each gallery hides a national treasure — carry all three to the Time Capsule to open the vault!",
+    outro: "The last treasure clicks into the Time Capsule and the vault grinds open — the Merlion roars hello! 🦁",
+    // No tablet/cipher: each gallery's puzzle frees a treasure you carry to the
+    // central Time Capsule (Android Vault's direct-delivery model).
     stations: [
       {
+        // Android Vault: west "Founding Gallery" — Mcq (1819).
         id: "merlion",
-        emoji: "🦁",
-        label: "Merlion Statue",
+        emoji: "📜",
+        label: "Founding Gallery",
         x: 17,
         y: 30,
         puzzle: {
           kind: "mcq",
-          emoji: "🦁",
-          prompt: "Singapore's old name 'Singapura' means…",
-          options: ["Lion City", "Sunny Island", "Big Harbour"],
+          emoji: "⚓",
+          prompt: "In which year did Raffles land and found modern Singapore?",
+          options: ["1819", "1942", "1965"],
           answerIndex: 0,
-          hint: "Look at the Merlion's head for a clue!",
-          learn: "'Singapura' means 'Lion City'! 🦁 The carved word on the stone tablet lights up.",
+          hint: "It's the earliest of the three years — the very start of the story.",
+          learn: "Raffles landed in 1819, founding modern Singapore! 📜 The Founding Gallery opens — grab the Treaty Scroll for the Time Capsule.",
         },
       },
       {
+        // Android Vault: east "Independence Hall" — NumberLock (1965).
         id: "timeline",
-        emoji: "🗳️",
-        label: "Old & New Box",
+        emoji: "🇸🇬",
+        label: "Independence Hall",
         x: 46,
         y: 22,
         puzzle: {
-          kind: "sort",
-          emoji: "🗳️",
-          prompt: "Sort each thing into Long Ago or Today to charge the tablet's letters.",
-          bins: [
-            { label: "Long Ago", emoji: "🕰️" },
-            { label: "Today", emoji: "🏙️" },
-          ],
-          items: [
-            { text: "Kampong house on stilts", bin: 0 },
-            { text: "The MRT train", bin: 1 },
-            { text: "Trishaw on the street", bin: 0 },
-            { text: "Mobile phone", bin: 1 },
-            { text: "Sampan boat on the river", bin: 0 },
-            { text: "Tall glass skyscrapers", bin: 1 },
-          ],
-          hint: "Long ago = kampongs, trishaws, sampans. Today = MRT, phones, skyscrapers.",
-          learn: "Singapore grew from kampongs and sampans into a modern city! The tablet's letters glow. 🔡",
+          kind: "code",
+          emoji: "🇸🇬",
+          prompt: "Key in the year Singapore became an independent nation.",
+          clue: "🇸🇬 19 _ _",
+          answer: "1965",
+          hint: "It became independent in the 1960s — nineteen sixty-five.",
+          learn: "Singapore became independent in 1965! 🇸🇬 Independence Hall opens — grab the National Flag for the Time Capsule.",
         },
       },
       {
+        // Android Vault: top "Lion City Room" — Unscramble (SINGA, PURA).
         id: "river",
-        emoji: "🚣",
-        label: "River Lanes",
+        emoji: "🦁",
+        label: "Lion City Room",
         x: 72,
         y: 30,
         puzzle: {
-          kind: "maze",
-          emoji: "🚣",
-          prompt: "Wind through the old river lanes to find the vault key. You can only see the lanes right around you!",
-          goalEmoji: "🗝️",
-          caption: "Use the arrows to find your way to 🗝️ through the old lanes.",
-          wonText: "🗝️ You found the vault key down the river lanes!",
-          variants: HISTORY_MAZES,
-          hint: "Only the lanes next to you light up — explore carefully to reach 🗝️.",
-          learn: "You traced the old Singapore River to the vault key! 🗝️ The tablet's symbol key lights up.",
+          kind: "unscramble",
+          emoji: "🦁",
+          prompt: "Unscramble Singapore's old Malay name, one word at a time.",
+          words: ["SINGA", "PURA"],
+          clues: [
+            "In Malay, the word for 'lion'.",
+            "In Malay, this means 'city' — put it after Singa for Singapore's old name.",
+          ],
+          hint: "Singa = lion, Pura = city → Singapura.",
+          learn: "'Singapura' means 'Lion City'! 🦁 The Lion City Room opens — grab the Merlion for the Time Capsule.",
         },
       },
     ],
+    // Three galleries branch off a wide central Time Capsule (the exit). Each
+    // gallery's puzzle frees a treasure you ferry to the capsule. Mirrors the
+    // Android Vault's hub-and-spoke direct-delivery layout.
+    layout: {
+      cols: 4,
+      rows: 2,
+      cells: [
+        { id: "hall", label: "Vault Entrance", gx: 0, gy: 0, role: "spawn" },
+        { id: "merlion", label: "Founding Gallery", gx: 1, gy: 0, stationId: "merlion", role: "puzzle" },
+        { id: "river", label: "Lion City Room", gx: 2, gy: 0, stationId: "river", role: "puzzle" },
+        { id: "timeline", label: "Independence Hall", gx: 3, gy: 0, stationId: "timeline", role: "puzzle" },
+        { id: "capsule", label: "Time Capsule", gx: 0, gy: 1, gw: 4, role: "exit" },
+      ],
+      doors: [
+        ["hall", "merlion"],
+        ["hall", "capsule"],
+        ["merlion", "capsule"],
+        ["river", "capsule"],
+        ["timeline", "capsule"],
+      ],
+      spawn: "hall",
+      exit: "capsule",
+      // Each treasure rests in its gallery and is pickable only once that
+      // gallery's puzzle is solved; carry all three to the Time Capsule.
+      carry: {
+        mode: "direct",
+        suitRoom: "capsule",
+        items: [
+          { id: "art-treaty", emoji: "📜", label: "Treaty Scroll", icon: "note", station: "merlion" },
+          { id: "art-merlion", emoji: "🦁", label: "Merlion", icon: "lion", station: "river" },
+          { id: "art-flag", emoji: "🇸🇬", label: "National Flag", icon: "flag", station: "timeline" },
+        ],
+      },
+      notes: [
+        {
+          id: "vault-note",
+          room: "capsule",
+          emoji: "📜",
+          title: "Vault Notice",
+          body: "Each gallery hides a national treasure behind its puzzle. Solve a gallery, pick up its treasure, and carry it here to the Time Capsule. Place all three to open the vault!",
+        },
+      ],
+    },
   },
   {
     slug: "sg-culture",
@@ -746,90 +1086,144 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     ],
     character: "👧",
     intro:
-      "Welcome to the Festival Street Party! The gate stays shut until the party is ready. Serve the hawker food, wire up the festival lights and count the parade drums — then unscramble the three party words to swing the gate open!",
-    outro: "The street erupts in music and glowing lights — you're a Singapore culture star! 🎉",
-    // Party gate: each station reveals one scrambled party word to unscramble.
-    exit: {
-      kind: "unscramble",
-      progressHint: "🎉 Get the party ready to light up the three words",
-      readyHint: "🎉 Party ready — unscramble the words to swing the gate open!",
-      words: [
-        { answer: "SATAY", scrambled: "TAYAS", reveal: "hawker", emoji: "🍢", core: "Yummy Word" },
-        { answer: "LIGHT", scrambled: "GHILT", reveal: "lights", emoji: "💡", core: "Glowing Word" },
-        { answer: "DRUMS", scrambled: "MURDS", reveal: "drums", emoji: "🥁", core: "Loud Word" },
-      ],
-    },
+      "Welcome to the Lion City Carnival! Visit the four festival stalls around the Grand Hall, then drag their words into the crossword. A secret animal reads down the gold column — spell it at the exit panel to open the gate!",
+    outro: "You spell the Lion City's name and the carnival gate swings wide — drums, lights and cheers! 🦁🎉",
+    // No special exit mechanism: solve the four stalls, the crossword and the
+    // symbol lock, then walk out (mirrors the Android Big Hall).
     stations: [
       {
-        id: "hawker",
-        emoji: "🍢",
-        label: "Satay Stall",
-        x: 17,
-        y: 30,
+        id: "food",
+        emoji: "🍜",
+        label: "Hawker Stall",
+        x: 50,
+        y: 18,
         puzzle: {
           kind: "order",
-          emoji: "🍢",
-          prompt: "Serve sizzling satay at your festival stall! Put the steps in order:",
+          emoji: "🍜",
+          prompt: "Cook a steaming bowl of laksa at the hawker stall. Put the steps in order:",
           items: [
-            "Skewer the meat onto sticks",
-            "Grill it over the hot coals",
-            "Serve it up to hungry guests",
+            "Simmer the spicy coconut-milk broth",
+            "Add the noodles, prawns and tofu puffs",
+            "Top with cockles and serve hot",
           ],
-          hint: "Skewer first, then grill, then serve.",
-          learn: "Satay is grilled meat on sticks — a hawker favourite at any festival! 🍢 A scrambled word lights up on the gate.",
+          hint: "Broth first, then the noodles, then the toppings.",
+          learn: "Laksa is a spicy coconut-milk noodle soup — a hawker favourite! 🍜",
         },
       },
       {
-        id: "lights",
-        emoji: "💡",
-        label: "Festival Lights",
-        x: 46,
-        y: 22,
+        id: "festival",
+        emoji: "🪔",
+        label: "Little India",
+        x: 18,
+        y: 50,
         puzzle: {
-          kind: "circuit",
-          emoji: "💡",
-          prompt: "The festival lights are dark! Tap the wires to spin them and connect ⚡ to the 💡 lights.",
-          // 3×3 wiring; rotate the pipes to link the power source to the lights.
-          tiles: [
-            [
-              { sides: ["E", "S"], rot: 1 },
-              { sides: ["E", "W"], rot: 1 },
-              { sides: ["N", "W"], rot: 1 },
-            ],
-            [
-              { sides: ["N", "S"], rot: 1 },
-              { sides: ["N", "E"], rot: 0 },
-              { sides: ["S", "W"], rot: 0 },
-            ],
-            [
-              { sides: ["N", "S"], rot: 1 },
-              { sides: ["N", "S"], rot: 0 },
-              { sides: ["N", "W"], rot: 0 },
-            ],
-          ],
-          start: { r: 2, c: 0, from: "S" },
-          end: { r: 0, c: 2, to: "N" },
-          hint: "Each tap turns a wire a quarter-turn. Make one unbroken line from ⚡ up to the lights💡.",
-          learn: "The festival lights glow to life! 💡 A scrambled word lights up on the gate.",
+          // Android Big Hall: Little India — Unscramble (DIWALI).
+          kind: "unscramble",
+          emoji: "🪔",
+          prompt: "Unscramble the Hindu festival of lights celebrated in Little India.",
+          words: ["DIWALI"],
+          clues: ["Oil lamps (diyas), colourful rangoli and sweets light up the festival of lights."],
+          hint: "It starts with DI… and is the festival of lights.",
+          learn: "Diwali is the festival of lights! 🪔 Row 2 of the crossword is DIWALI.",
         },
       },
       {
-        id: "drums",
-        emoji: "🥁",
-        label: "Drum Beat",
-        x: 72,
-        y: 30,
+        id: "flower",
+        emoji: "🌺",
+        label: "Gardens",
+        x: 82,
+        y: 50,
         puzzle: {
-          kind: "code",
-          emoji: "🥁",
-          prompt: "The parade drums are mixed in with other party things. Count the 🥁 drums and type how many.",
-          clue: "🥁 🎶 🥁 🪔 🥁 🎉 🥁 🏮 🥁",
-          answer: "5",
-          hint: "Touch each 🥁 as you count — skip the music notes, lamps and lanterns.",
-          learn: "Five drums set the festival beat! 🥁 The last scrambled word lights up on the gate.",
+          kind: "mcq",
+          emoji: "🌺",
+          prompt: "What is Singapore's national flower?",
+          options: ["Orchid", "Rose", "Tulip"],
+          answerIndex: 0,
+          hint: "It's the Vanda 'Miss Joaquim' — a kind of this flower.",
+          learn: "The orchid is Singapore's national flower! 🌺",
+        },
+      },
+      {
+        id: "fruit",
+        emoji: "🥭",
+        label: "Fruit Stall",
+        x: 50,
+        y: 82,
+        puzzle: {
+          kind: "cipher",
+          emoji: "🔣",
+          prompt: "Use the stall's symbol key to read the spiky 'king of fruits', then type it in.",
+          symbols: ["🍴", "🥥", "🍢", "🍜", "🥭", "🦁", "🌺", "🏮", "🪔", "🧧", "🥮", "🎆"],
+          letters: ["A", "D", "I", "L", "N", "O", "R", "S", "T", "U", "K", "C"],
+          coded: ["🥥", "🧧", "🌺", "🍢", "🍴", "🥭"], // D U R I A N
+          answer: "DURIAN",
+          hint: "Find each symbol in the key and jot its letter — they're spread all over.",
+          learn: "Durian is the spiky 'king of fruits'! 🥭",
+        },
+      },
+      {
+        id: "crossword",
+        emoji: "🧩",
+        label: "Grand Hall Crossword",
+        x: 50,
+        y: 50,
+        puzzle: {
+          kind: "crossword",
+          emoji: "🧩",
+          prompt: "Drag each carnival word into its numbered row. A secret animal reads down the gold column!",
+          rows: [
+            { num: 1, word: "LAKSA", offset: 5, clue: "Spicy coconut-milk noodle soup" },
+            { num: 2, word: "DIWALI", offset: 4, clue: "Hindu festival of lights" },
+            { num: 3, word: "ORCHID", offset: 5, clue: "Singapore's national flower" },
+            { num: 4, word: "DURIAN", offset: 0, clue: "The spiky 'king of fruits'" },
+          ],
+          secretCol: 5,
+          secret: "LION",
+          hint: "Use the clues — each numbered row takes one word. The gold column spells a famous animal.",
+          learn: "The gold column spells LION — Singapore is the Lion City! 🦁 Now spell it at the exit panel.",
+        },
+      },
+      {
+        id: "lockpad",
+        emoji: "🔣",
+        label: "Exit Panel",
+        x: 82,
+        y: 82,
+        puzzle: {
+          kind: "symbol-lock",
+          emoji: "🔣",
+          prompt: "Spell the crossword's secret word using the symbol key.",
+          word: "LION",
+          hint: "Read each letter's symbol from the key, then tap them in order: L · I · O · N.",
+          learn: "L-I-O-N — you spelled the Lion City's name and the carnival gate opens! 🦁🎉",
         },
       },
     ],
+    // A plus-shaped hub (Android Big Hall): the Grand Hall crossword sits in the
+    // centre, the four stalls branch off it, and the Exit Panel hangs off the
+    // Gardens. The crossword is locked until all four stalls are solved; the
+    // exit panel until the crossword is done.
+    layout: {
+      cols: 3,
+      rows: 3,
+      cells: [
+        { id: "hall", label: "Grand Hall", gx: 1, gy: 1, stationId: "crossword", role: "spawn", requiresAll: ["food", "festival", "flower", "fruit"] },
+        { id: "food", label: "Hawker Stall", gx: 1, gy: 0, stationId: "food", role: "puzzle" },
+        { id: "festival", label: "Little India", gx: 0, gy: 1, stationId: "festival", role: "puzzle" },
+        { id: "flower", label: "Gardens", gx: 2, gy: 1, stationId: "flower", role: "puzzle" },
+        { id: "fruit", label: "Fruit Stall", gx: 1, gy: 2, stationId: "fruit", role: "puzzle" },
+        { id: "exit", label: "Exit Panel", gx: 2, gy: 2, stationId: "lockpad", role: "exit", requires: "crossword" },
+      ],
+      doors: [
+        ["hall", "food"],
+        ["hall", "festival"],
+        ["hall", "flower"],
+        ["hall", "fruit"],
+        ["flower", "exit"],
+      ],
+      spawn: "hall",
+      exit: "exit",
+    },
   },
   {
     slug: "sg-nature",
@@ -856,7 +1250,7 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
     ],
     character: "👦",
     intro:
-      "You're on the Garden City Trail when the park gate clicks shut! Meet the otters, grow a tree and crack the ranger's code to light up three words on the trail map — where they all cross is the gate code!",
+      "You're on the Garden City Trail when the park gate clicks shut! Explore the Lazy River and crack the ranger's code to light up the trail words — then read the ranger's note to work out the hidden one. Once you've read the whole map, walk the trail it shows to find the lost gate key — then carry it to the gate to unlock it and escape!",
     outro: "The gate opens to a chorus of birds and a wave from the otters — what a nature explorer! 🌳",
     stations: [
       {
@@ -879,23 +1273,44 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
       },
       {
         id: "seed",
-        emoji: "🌱",
-        label: "Growing Tree",
+        emoji: "🥾",
+        label: "The Trail",
         x: 44,
         y: 22,
-        // Lights up GARDEN (as a 🌳 picture clue) on the trail map.
-        provides: [{ kind: "word", to: "trailmap", word: "GARDEN", emoji: "🌳" }],
+        // The finale — no word clue. The Trail Map word search (trailmap) must be
+        // solved first to reveal which order to walk the trail; until then the maze
+        // stays locked.
         puzzle: {
-          kind: "order",
-          emoji: "🌳",
-          prompt: "Help a seed grow into a big tree. Put the steps in order:",
-          items: [
-            "Plant the tiny seed",
-            "A green shoot pops up",
-            "It grows into a tall tree",
+          kind: "trailmaze",
+          emoji: "🥾",
+          unlockedBy: "trailmap",
+          prompt: "Read the Trail Map first, then walk the trail in the order it shows to reach the lost gate key!",
+          // 11×11 park-trail maze with real dead-ends; fog of war hides cells you
+          // haven't explored, so you have to scout the trail to find each landmark.
+          grid: [
+            "###########",
+            "#S..#....G#",
+            "#.#.#.###.#",
+            "#.#...#.#.#",
+            "#.#####.#.#",
+            "#.....#.#.#",
+            "###.#.#.#.#",
+            "#...#.#...#",
+            "#.#####.###",
+            "#.........#",
+            "###########",
           ],
-          hint: "Seed first, then a shoot, then a tree.",
-          learn: "Trees make Singapore a green Garden City! 🌳 The word GARDEN will light up on the trail map.",
+          landmarks: [
+            { at: [9, 1], emoji: "🦦" },
+            { at: [3, 7], emoji: "🌳" },
+            { at: [7, 3], emoji: "🌊" },
+          ],
+          route: ["🦦", "🌳", "🌊"],
+          goalEmoji: "🔑",
+          caption: "Walk the map's order: 🦦 → 🌳 → 🌊 → grab the 🔑 gate key!",
+          wonText: "🔑 You found the gate key! Pick it up and carry it to the Garden Gate.",
+          hint: "Scout the trail through the fog — the map's order is 🦦, then 🌳, then 🌊. Reach the 🔑 key last.",
+          learn: "You read the trail map and followed it to the lost gate key! 🔑 Now carry the key to the Garden Gate to unlock it and escape.",
         },
       },
       {
@@ -929,10 +1344,13 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
         puzzle: {
           kind: "wordsearch",
           emoji: "🔎",
-          prompt: "Three words will light up on the map. Find all three words — they all cross at one square!",
+          prompt: "Two trail words light up when you solve the Lazy River and the Ranger's Code. The third stays hidden — read the ranger's note to work it out, then find all three!",
           words: ["OTTER", "GARDEN", "RIVER"],
-          // Deterministic grid: OTTER (→), GARDEN (↓) and RIVER (↘) all share the
-          // E at row 4, col 3 (0-indexed) → exit code Column 4, Row 5.
+          // GARDEN never lights up — it shows as ❓; the ranger's note hints it.
+          secret: ["GARDEN"],
+          // Deterministic grid: OTTER (→ row 4), GARDEN (↓ col 3) and RIVER (↘)
+          // all cross at the E at row 4, col 3 — but reading the map now just tells
+          // you the trail order; the gate is the maze, not a code.
           layout: [
             ["K", "X", "Q", "G", "H", "U", "F", "M"],
             ["R", "Z", "L", "A", "J", "W", "Y", "B"],
@@ -943,12 +1361,53 @@ export const ESCAPE_ROOMS: EscapeRoom[] = [
             ["D", "Z", "K", "J", "V", "C", "Y", "F"],
             ["P", "M", "H", "W", "Q", "U", "F", "Z"],
           ],
-          intersection: [4, 3],
-          hint: "OTTER goes across, GARDEN goes down, RIVER goes slanted — find where they meet.",
-          learn: "OTTER, GARDEN and RIVER all cross at one square! Read that square's Column and Row, then key them into the gate. 🔢",
+          hint: "The two lit-up words go across and slanted; the hidden one goes straight DOWN — the note tells you what it is.",
+          learn: "OTTER, GARDEN and RIVER mark the trail on the map — now you know which way to walk it! 🗺️",
         },
       },
     ],
+    // 4×2 with a wide Meadow hub. River + Ranger light up trail words; the Trail
+    // Map word search reveals the maze's order; walking the maze (The Trail) drops
+    // the gate key, which you carry to the Garden Gate to escape.
+    layout: {
+      cols: 4,
+      rows: 2,
+      cells: [
+        { id: "start", label: "Trail Start", gx: 0, gy: 0, role: "spawn" },
+        { id: "meadow", label: "Meadow", gx: 1, gy: 0, gw: 2 },
+        { id: "exit", label: "Garden Gate", gx: 3, gy: 0, role: "exit" },
+        { id: "river", label: "Lazy River", gx: 0, gy: 1, stationId: "river", role: "puzzle" },
+        { id: "ranger", label: "Ranger's Code", gx: 1, gy: 1, stationId: "ranger", role: "puzzle" },
+        { id: "seed", label: "The Trail", gx: 2, gy: 1, stationId: "seed", role: "puzzle" },
+        { id: "trailmap", label: "Trail Map", gx: 3, gy: 1, stationId: "trailmap", role: "puzzle" },
+      ],
+      doors: [
+        ["start", "meadow"],
+        ["start", "river"],
+        ["meadow", "ranger"],
+        ["meadow", "seed"],
+        ["seed", "trailmap"],
+        ["trailmap", "exit"],
+      ],
+      spawn: "start",
+      exit: "exit",
+      // Walking The Trail (the maze) frees the gate key in that room; carry it to
+      // the Garden Gate (the exit) and place it to unlock the door.
+      carry: {
+        mode: "direct",
+        suitRoom: "exit",
+        items: [{ id: "gate-key", emoji: "🔑", label: "Gate Key", icon: "key", station: "seed" }],
+      },
+      notes: [
+        {
+          id: "trail-note",
+          room: "meadow",
+          emoji: "📋",
+          title: "Ranger's Note",
+          body: "Solve the Lazy River and the Ranger's Code and two trail words light up on the map. The third stays hidden — here's the clue: Singapore is famous as a green ‘City’ full of parks and trees, a ______ City.",
+        },
+      ],
+    },
   },
 ];
 
