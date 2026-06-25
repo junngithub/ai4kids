@@ -8,11 +8,13 @@ import {
   type EscapeRoom,
   type EscapeRoomPuzzle,
   type RoomCipherExit,
+  type RoomNote,
   type RoomUnscrambleExit,
   type SceneKind,
   type Station,
 } from "@/lib/escape-rooms";
 import type { SessionStateDTO, PlayerDTO } from "@/lib/escape-session";
+import { buildGeometry, roomAt, centerOf, moveWithCollision, type Point } from "@/lib/escape-geometry";
 
 const POINTS_FIRST_TRY = 10;
 const POINTS_WITH_HELP = 6;
@@ -147,7 +149,11 @@ function SoloRoom({ room }: { room: EscapeRoom }) {
     );
   }
 
-  return <RoomScene room={room} solvedIds={solvedIds} onSolve={onSolve} onEscape={() => setEscaped(true)} />;
+  return room.layout ? (
+    <RoomMap room={room} solvedIds={solvedIds} onSolve={onSolve} onEscape={() => setEscaped(true)} />
+  ) : (
+    <RoomScene room={room} solvedIds={solvedIds} onSolve={onSolve} onEscape={() => setEscaped(true)} />
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -384,17 +390,16 @@ function CoopRoom({ room, onLeave }: { room: EscapeRoom; onLeave: () => void }) 
   }
 
   // --- Playing: the shared room scene ---
-  return (
-    <RoomScene
-      room={room}
-      solvedIds={st.solved}
-      onSolve={onSolve}
-      onEscape={onEscape}
-      isCoop
-      others={st.players.filter((p) => p.learnerId !== st.you)}
-      onPresence={onPresence}
-    />
-  );
+  const sceneProps = {
+    room,
+    solvedIds: st.solved,
+    onSolve,
+    onEscape,
+    isCoop: true,
+    others: st.players.filter((p) => p.learnerId !== st.you),
+    onPresence,
+  };
+  return room.layout ? <RoomMap {...sceneProps} /> : <RoomScene {...sceneProps} />;
 }
 
 /** A horizontal row of player avatars (lobby + results). */
@@ -466,6 +471,13 @@ function RoomScene({
   const reviewing = !!openStation && solvedIds.includes(openStation.id) && !justSolved;
   const lockPuzzle = justSolved || reviewing;
 
+  // Trail maze: its route order stays hidden until the prerequisite "map" station
+  // (`unlockedBy`) is solved — read the map to learn which way to walk.
+  const orderUnlocked =
+    openStation?.puzzle.kind !== "trailmaze" ||
+    !openStation.puzzle.unlockedBy ||
+    solvedIds.includes(openStation.puzzle.unlockedBy);
+
   // Exit code: the 1-indexed Column & Row where the word-search words all
   // cross. The player reads it off the labelled grid and keys it into the door.
   const codeSlots = useMemo(() => {
@@ -473,8 +485,8 @@ function RoomScene({
       if (s.puzzle.kind === "wordsearch" && s.puzzle.intersection) {
         const [row, col] = s.puzzle.intersection;
         return [
-          { label: "Column", emoji: "➡️", value: String(col + 1) },
-          { label: "Row", emoji: "⬇️", value: String(row + 1) },
+          { value: String(row + 1) },
+          { value: String(col + 1) },
         ];
       }
     }
@@ -738,7 +750,11 @@ function RoomScene({
           />
           <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl ring-1 ring-amber-100">
             <div className="flex items-center gap-2 font-fun font-700 text-slate-700">
-              <span className="text-2xl">{openStation.emoji}</span> {openStation.label}
+              <StationIcon
+                name={STATION_ICON[`${room.slug}:${openStation.id}`] ?? "panel"}
+                className="h-6 w-6 text-slate-500"
+              />
+              {openStation.label}
               <button
                 onClick={closeModal}
                 aria-label="Close"
@@ -775,6 +791,7 @@ function RoomScene({
                   hiddenWords={hiddenWords}
                   wordHints={wordHints}
                   showCoords
+                  orderUnlocked={orderUnlocked}
                   onSolved={handleSolved}
                   onWrong={() => setWrongCount((c) => c + 1)}
                 />
@@ -852,6 +869,982 @@ function RoomScene({
         />
       )}
     </>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* RoomMap — navigable top-down rooms: walls, free movement, take/drop  */
+/* ------------------------------------------------------------------ */
+
+const MAP_CELL = 100; // units per grid cell
+const CHAR_R = 15; // character collision radius (units) — small enough to clear doorways
+const MAP_SPEED = 150; // units / second (a cell is 100 units → ~0.7s to cross)
+const REACH = 58; // interaction range (units)
+
+type MapInteractable = {
+  key: string;
+  kind: "machine" | "note" | "item" | "charge" | "wash" | "deliver" | "exit";
+  id: string;
+  label: string;
+  x: number;
+  y: number;
+  enabled?: boolean;
+};
+
+function RoomMap({
+  room,
+  solvedIds,
+  onSolve,
+  onEscape,
+  isCoop = false,
+  others = [],
+  onPresence,
+}: {
+  room: EscapeRoom;
+  solvedIds: string[];
+  onSolve: (stationId: string, firstTry: boolean) => void;
+  onEscape: () => void;
+  isCoop?: boolean;
+  others?: ScenePlayer[];
+  onPresence?: (atStation: string | null) => void;
+}) {
+  const layout = room.layout!;
+  const geo = useMemo(
+    () =>
+      buildGeometry(
+        layout,
+        { w: layout.cols * MAP_CELL, h: layout.rows * MAP_CELL },
+        { wall: 8, doorFrac: 0.62 },
+      ),
+    [layout],
+  );
+  const W = geo.area.w;
+  const H = geo.area.h;
+  const pct = (v: number, total: number) => `${(v / total) * 100}%`;
+
+  // ---- puzzle modal + progress (mirrors RoomScene) ----
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [openNote, setOpenNote] = useState<string | null>(null);
+  const [doorOpen, setDoorOpen] = useState(false);
+  const [coresDone, setCoresDone] = useState<number[]>([]);
+  const [wrongCount, setWrongCount] = useState(0);
+  const [hintShown, setHintShown] = useState(false);
+  const [justSolved, setJustSolved] = useState(false);
+
+  // ---- carry mechanic (cores / artefacts / bottles) — mirrors the Android
+  // doAction() state machine: pick up → charge/wash → deliver, set down to swap.
+  const carry = layout.carry ?? null;
+  const carryItems = carry?.items ?? [];
+  const [carrying, setCarrying] = useState<string | null>(null);
+  const [carriedReady, setCarriedReady] = useState(false); // charged core / washed bottle in hand
+  const [charged, setCharged] = useState<string[]>([]); // cores charged & resting at their station
+  const [washed, setWashed] = useState<string[]>([]); // bottles washed & set down (still to recycle)
+  const [delivered, setDelivered] = useState<string[]>([]); // cores/artefacts delivered, bottles recycled
+  const [drops, setDrops] = useState<Record<string, Point>>({}); // item id → where it was set down
+  const [flash, setFlash] = useState<string | null>(null); // transient hint ("Locked…", "Set down")
+
+  // ---- live navigation ----
+  const [near, setNear] = useState<MapInteractable | null>(null);
+  // Fog of war — only the room you're currently in is lit; every other room
+  // stays fully dark + opaque, whether or not you've been there before.
+  const [curRoom, setCurRoom] = useState(layout.spawn);
+
+  const total = room.stations.length;
+  const allSolved = solvedIds.length >= total;
+  const deliveredAll = carryItems.length === 0 || delivered.length >= carryItems.length;
+  // Recycling: every bottle recycled unlocks the gated circuit room.
+  const bottlesDone = carry?.mode === "recycle" && deliveredAll;
+  // The exit waits on charge/direct carries directly; recycle carries gate the
+  // circuit room's puzzle instead (solving it already feeds the exit).
+  const exitReady = allSolved && (carry?.mode === "recycle" || deliveredAll);
+
+  const openStation = room.stations.find((s) => s.id === openId) ?? null;
+  const reviewing = !!openStation && solvedIds.includes(openStation.id) && !justSolved;
+  const lockPuzzle = justSolved || reviewing;
+  const orderUnlocked =
+    openStation?.puzzle.kind !== "trailmaze" ||
+    !openStation.puzzle.unlockedBy ||
+    solvedIds.includes(openStation.puzzle.unlockedBy);
+  const noteData = layout.notes?.find((n) => n.id === openNote) ?? null;
+  const labelOf = (id: string | null) => carryItems.find((i) => i.id === id)?.label ?? "item";
+  const itemIcon = (id: string | null) => {
+    const it = carryItems.find((i) => i.id === id);
+    if (!it) return "core";
+    // Charge-mode cores are identical generic orbs until charged; a charged core
+    // takes on its charger's symbol so you can finally tell them apart.
+    if (carry?.mode === "charge") {
+      const isCharged = charged.includes(it.id) || (carrying === it.id && carriedReady);
+      return isCharged && it.station ? STATION_ICON[`${room.slug}:${it.station}`] ?? "core" : "core";
+    }
+    if (it.icon) return it.icon;
+    return it.station ? STATION_ICON[`${room.slug}:${it.station}`] ?? "core" : "bottle";
+  };
+
+  // Charge-mode cores carry a matching number (the only distinguisher while
+  // loose); each charger room shows the number of the core it wants.
+  const coreNumber = (id: string | null): number | null => {
+    if (carry?.mode !== "charge" || id == null) return null;
+    const idx = carry.items.findIndex((it) => it.id === id);
+    return idx >= 0 ? idx + 1 : null;
+  };
+
+  // --- carry-mechanic anchors (suit/sink/recycler/station positions) ---
+  const cellForStation = (sid: string) => layout.cells.find((c) => c.stationId === sid);
+  const machinePos = (sid: string): Point | null => {
+    const cell = cellForStation(sid);
+    return cell && geo.floors[cell.id] ? centerOf(geo.floors[cell.id]) : null;
+  };
+  const suitRoomId = carry && carry.mode !== "recycle" ? carry.suitRoom : null;
+  const suitFloor = suitRoomId ? geo.floors[suitRoomId] : null;
+  const suitPt = suitFloor ? centerOf(suitFloor) : null;
+  const sinkFloor = carry?.mode === "recycle" ? geo.floors[carry.sinkRoom] : null;
+  const depositFloor = carry?.mode === "recycle" ? geo.floors[carry.depositRoom] : null;
+  const sinkPt = sinkFloor ? { x: sinkFloor.x + sinkFloor.w * 0.26, y: sinkFloor.y + sinkFloor.h * 0.82 } : null;
+  const depositPt = depositFloor ? { x: depositFloor.x + depositFloor.w * 0.76, y: depositFloor.y + depositFloor.h * 0.82 } : null;
+
+  // Where an item rests right now (home / charged-at-station / set-down / delivered).
+  const itemHome = (it: typeof carryItems[number], i: number): Point => {
+    if (carry?.mode === "charge") {
+      // Line the (identical-looking) cores up left-to-right so their order
+      // matches the row of numbered cores drawn in the note (kept below the pin).
+      const r = geo.floors[carry.coreRoom];
+      return { x: r.x + r.w * (0.24 + 0.26 * i), y: r.y + r.h * 0.62 };
+    }
+    if (carry?.mode === "direct") {
+      const cell = it.station ? cellForStation(it.station) : null;
+      const r = (cell && geo.floors[cell.id]) || geo.floors[layout.spawn];
+      return { x: r.x + r.w * 0.3, y: r.y + r.h * 0.3 };
+    }
+    // Bottles rest near the top of their room, clear of the centred machine and
+    // the bottom-corner sink/recycler.
+    const r = geo.floors[it.home ?? layout.spawn];
+    return { x: r.x + r.w * (0.32 + 0.18 * (i % 3)), y: r.y + r.h * 0.24 };
+  };
+  const itemPos = (it: typeof carryItems[number], i: number): Point => {
+    if (delivered.includes(it.id)) {
+      if (carry?.mode === "recycle" && depositPt) return { x: depositPt.x + (i - 1) * 16, y: depositPt.y - 18 };
+      if (suitPt) return { x: suitPt.x + (i - 1) * 18, y: suitPt.y + 20 };
+    }
+    if (drops[it.id]) return drops[it.id];
+    if (carry?.mode === "charge" && charged.includes(it.id) && it.station) {
+      const m = machinePos(it.station);
+      if (m) return { x: m.x, y: m.y - 24 };
+    }
+    return itemHome(it, i);
+  };
+  // Can the player pick this item up (loose, not carried, not delivered; an
+  // artefact only once its gallery is solved)?
+  const isPickable = (it: typeof carryItems[number]) =>
+    !carrying &&
+    !delivered.includes(it.id) &&
+    !(carry?.mode === "direct" && it.station != null && !solvedIds.includes(it.station));
+
+  // A machine is locked until its prerequisites are met (recycle gate, or a
+  // `requires`/`requiresAll` chain like the crossword → symbol-lock).
+  const cellLocked = (cell: typeof layout.cells[number]): boolean => {
+    if (carry?.mode === "recycle" && carry.gateRoom === cell.id && !bottlesDone) return true;
+    if (cell.requires && !solvedIds.includes(cell.requires)) return true;
+    if (cell.requiresAll?.some((id) => !solvedIds.includes(id))) return true;
+    return false;
+  };
+  const lockMessage = (cell: typeof layout.cells[number]): string =>
+    carry?.mode === "recycle" && carry.gateRoom === cell.id && !bottlesDone
+      ? "Locked — recycle all the bottles first"
+      : "Locked — solve the other rooms first";
+
+  // exit mechanism — identical derivations to RoomScene
+  const codeSlots = useMemo(() => {
+    for (const s of room.stations) {
+      if (s.puzzle.kind === "wordsearch" && s.puzzle.intersection) {
+        const [r, c] = s.puzzle.intersection;
+        return [
+          { value: String(r + 1) },
+          { value: String(c + 1) },
+        ];
+      }
+    }
+    return [];
+  }, [room.stations]);
+  const usesCodeExit = codeSlots.length > 0;
+  const exitCode = codeSlots.map((d) => d.value).join("");
+  const cipherExit = room.exit?.kind === "cipher" ? room.exit : null;
+  const unscrambleExit = room.exit?.kind === "unscramble" ? room.exit : null;
+
+  const norm = (w: string) => w.toUpperCase().replace(/[^A-Z]/g, "");
+  const { hiddenWords, wordHints } = useMemo(() => {
+    const hidden = new Set<string>();
+    const hints = new Map<string, string>();
+    if (openStation?.puzzle.kind !== "wordsearch") return { hiddenWords: hidden, wordHints: hints };
+    const providerOf = new Map<string, { id: string; emoji: string }>();
+    for (const s of room.stations) {
+      for (const clue of s.provides ?? []) {
+        if (clue.kind === "word" && clue.to === openStation.id) {
+          providerOf.set(norm(clue.word), { id: s.id, emoji: clue.emoji });
+        }
+      }
+    }
+    for (const w of openStation.puzzle.words) {
+      const provider = providerOf.get(norm(w));
+      if (!provider) continue;
+      hints.set(norm(w), provider.emoji);
+      if (!solvedIds.includes(provider.id)) hidden.add(norm(w));
+    }
+    return { hiddenWords: hidden, wordHints: hints };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openStation, room.stations, solvedIds]);
+
+  useEffect(() => {
+    setWrongCount(0);
+    setHintShown(false);
+    setJustSolved(false);
+  }, [openId]);
+
+  // ---- interactables (one contextual action, mirroring doAction) ----
+  const interactables = useMemo<MapInteractable[]>(() => {
+    const list: MapInteractable[] = [];
+
+    // While carrying, the only action is the contextual carry step (charge / wash
+    // / deliver) — set-down is the action-button fallback when none is in reach.
+    if (carrying) {
+      const held = carryItems.find((i) => i.id === carrying);
+      if (held) {
+        if (carry?.mode === "charge") {
+          if (!carriedReady && held.station) {
+            const m = machinePos(held.station);
+            if (m) list.push({ key: "charge", kind: "charge", id: held.station, label: `Charge ${held.label}`, x: m.x, y: m.y, enabled: solvedIds.includes(held.station) });
+          } else if (carriedReady && suitPt) {
+            list.push({ key: "deliver", kind: "deliver", id: suitRoomId!, label: "Power the suit", x: suitPt.x, y: suitPt.y });
+          }
+        } else if (carry?.mode === "direct" && suitPt) {
+          list.push({ key: "deliver", kind: "deliver", id: suitRoomId!, label: `Place ${held.label}`, x: suitPt.x, y: suitPt.y });
+        } else if (carry?.mode === "recycle") {
+          if (!carriedReady && sinkPt) list.push({ key: "wash", kind: "wash", id: "sink", label: `Wash ${held.label}`, x: sinkPt.x, y: sinkPt.y });
+          else if (carriedReady && depositPt) list.push({ key: "deposit", kind: "deliver", id: "recycler", label: `Recycle ${held.label}`, x: depositPt.x, y: depositPt.y });
+        }
+      }
+      return list;
+    }
+
+    // Empty-handed — machines, notes, loose items, exit.
+    for (const cell of layout.cells) {
+      if (!cell.stationId) continue;
+      const c = centerOf(geo.floors[cell.id]);
+      const gated = cellLocked(cell);
+      list.push({
+        key: `m-${cell.id}`,
+        kind: "machine",
+        id: cell.stationId,
+        label: gated ? "Locked" : solvedIds.includes(cell.stationId) ? "Review" : "Open",
+        x: c.x,
+        y: c.y,
+      });
+    }
+    for (const n of layout.notes ?? []) {
+      const r = geo.floors[n.room];
+      if (!r) continue;
+      list.push({ key: `n-${n.id}`, kind: "note", id: n.id, label: "Read", x: r.x + r.w / 2, y: r.y + r.h * 0.3 });
+    }
+    carryItems.forEach((it, i) => {
+      if (!isPickable(it)) return;
+      const p = itemPos(it, i);
+      list.push({ key: `i-${it.id}`, kind: "item", id: it.id, label: `Take ${it.label}`, x: p.x, y: p.y });
+    });
+    const er = geo.floors[layout.exit];
+    if (er) {
+      const c = centerOf(er);
+      list.push({ key: "exit", kind: "exit", id: layout.exit, label: "Open the door", x: c.x, y: c.y + 22, enabled: exitReady });
+    }
+    return list;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geo, layout, solvedIds, carry, carrying, carriedReady, charged, delivered, drops, bottlesDone, exitReady]);
+
+  // ---- refs for the animation/input loop (avoid 60fps re-renders) ----
+  const posRef = useRef<Point>({ ...geo.spawn });
+  const charRef = useRef<HTMLDivElement | null>(null);
+  const velRef = useRef({ x: 0, y: 0 });
+  const nearKeyRef = useRef<string | null>(null);
+  const curRoomRef = useRef(layout.spawn);
+  const onPresenceRef = useRef(onPresence);
+  const interRef = useRef(interactables);
+  const modalRef = useRef(false);
+  const actionRef = useRef<(n: MapInteractable | null) => void>(() => {});
+  onPresenceRef.current = onPresence;
+  interRef.current = interactables;
+  modalRef.current = !!(openId || openNote || doorOpen);
+
+  // movement + proximity loop
+  useEffect(() => {
+    let raf = 0;
+    let last = performance.now();
+    const frame = (t: number) => {
+      const dt = Math.min((t - last) / 1000, 0.05);
+      last = t;
+      if (!modalRef.current) {
+        const v = velRef.current;
+        if (v.x || v.y) {
+          const mag = Math.hypot(v.x, v.y) || 1;
+          const sp = Math.min(mag, 1) * MAP_SPEED * dt;
+          const np = moveWithCollision(posRef.current, (v.x / mag) * sp, (v.y / mag) * sp, CHAR_R, geo.walls, geo.area);
+          posRef.current = np;
+          if (charRef.current) {
+            charRef.current.style.left = pct(np.x, W);
+            charRef.current.style.top = pct(np.y, H);
+          }
+          const rm = roomAt(geo, np);
+          if (rm && rm !== curRoomRef.current) {
+            curRoomRef.current = rm;
+            onPresenceRef.current?.(rm);
+            setCurRoom(rm);
+          }
+        }
+        // nearest enabled interactable (every frame, even when standing still)
+        let best: MapInteractable | null = null;
+        let bestD = REACH;
+        for (const it of interRef.current) {
+          if (it.enabled === false) continue;
+          const d = Math.hypot(it.x - posRef.current.x, it.y - posRef.current.y);
+          if (d < bestD) {
+            bestD = d;
+            best = it;
+          }
+        }
+        if ((best?.key ?? null) !== nearKeyRef.current) {
+          nearKeyRef.current = best?.key ?? null;
+          setNear(best);
+        }
+      }
+      raf = requestAnimationFrame(frame);
+    };
+    raf = requestAnimationFrame(frame);
+    return () => cancelAnimationFrame(raf);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [geo]);
+
+  // keyboard movement
+  useEffect(() => {
+    const down = new Set<string>();
+    const recompute = () => {
+      velRef.current = {
+        x: (down.has("ArrowRight") || down.has("d") ? 1 : 0) - (down.has("ArrowLeft") || down.has("a") ? 1 : 0),
+        y: (down.has("ArrowDown") || down.has("s") ? 1 : 0) - (down.has("ArrowUp") || down.has("w") ? 1 : 0),
+      };
+    };
+    const isMove = (k: string) => ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "w", "a", "s", "d"].includes(k);
+    const onDown = (e: KeyboardEvent) => {
+      if (modalRef.current) return;
+      if (e.key === " " || e.key === "Enter") {
+        e.preventDefault();
+        const it = nearKeyRef.current ? interRef.current.find((i) => i.key === nearKeyRef.current) ?? null : null;
+        // No target in reach still fires the action (carry → set down).
+        actionRef.current(it);
+        return;
+      }
+      if (isMove(e.key)) {
+        e.preventDefault();
+        down.add(e.key);
+        recompute();
+      }
+    };
+    const onUp = (e: KeyboardEvent) => {
+      if (isMove(e.key)) {
+        down.delete(e.key);
+        recompute();
+      }
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  function pickUp(id: string) {
+    setCarrying(id);
+    // A core picked back up from its station is already charged; a washed bottle
+    // picked back up is still clean.
+    setCarriedReady(carry?.mode === "charge" ? charged.includes(id) : carry?.mode === "recycle" ? washed.includes(id) : false);
+    setCharged((c) => c.filter((x) => x !== id));
+    setWashed((w) => w.filter((x) => x !== id));
+    setDrops((d) => {
+      if (!(id in d)) return d;
+      const next = { ...d };
+      delete next[id];
+      return next;
+    });
+  }
+
+  /** Set the carried item down where you stand (so you can swap it). */
+  function setDown() {
+    if (!carrying) return;
+    const id = carrying;
+    setDrops((d) => ({ ...d, [id]: { x: posRef.current.x, y: posRef.current.y } }));
+    if (carriedReady && carry?.mode === "charge") setCharged((c) => (c.includes(id) ? c : [...c, id]));
+    if (carriedReady && carry?.mode === "recycle") setWashed((w) => (w.includes(id) ? w : [...w, id]));
+    setCarrying(null);
+    setCarriedReady(false);
+  }
+
+  function performAction(n: MapInteractable | null) {
+    // No target in reach while carrying → drop the item where you stand.
+    if (!n) {
+      if (carrying) setDown();
+      return;
+    }
+    if (n.enabled === false) {
+      if (n.kind === "charge") setFlash("Solve this charger first!");
+      return;
+    }
+    switch (n.kind) {
+      case "machine": {
+        const cell = cellForStation(n.id);
+        if (cell && cellLocked(cell)) {
+          setFlash(lockMessage(cell));
+          return;
+        }
+        setOpenId(n.id);
+        break;
+      }
+      case "note":
+        setOpenNote(n.id);
+        break;
+      case "item":
+        pickUp(n.id);
+        break;
+      case "charge":
+        if (carrying) {
+          const id = carrying;
+          setCharged((c) => (c.includes(id) ? c : [...c, id]));
+          setCarrying(null);
+          setCarriedReady(false);
+          setFlash("Core charged! ⚡");
+        }
+        break;
+      case "wash":
+        setCarriedReady(true);
+        setFlash("Bottle washed — now recycle it! ✨");
+        break;
+      case "deliver":
+        if (carrying) {
+          const id = carrying;
+          setDelivered((d) => (d.includes(id) ? d : [...d, id]));
+          setCarrying(null);
+          setCarriedReady(false);
+        }
+        break;
+      case "exit":
+        if (usesCodeExit || cipherExit || unscrambleExit) setDoorOpen(true);
+        else onEscape();
+        break;
+    }
+  }
+
+  actionRef.current = performAction;
+
+  // Auto-dismiss the transient carry hint.
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 1800);
+    return () => clearTimeout(t);
+  }, [flash]);
+
+  function closeModal() {
+    setOpenId(null);
+  }
+  function handleSolved() {
+    if (justSolved || !openStation) return;
+    setJustSolved(true);
+    onSolve(openStation.id, wrongCount === 0 && !hintShown);
+  }
+
+
+  const heldItem = carryItems.find((i) => i.id === carrying) ?? null;
+  const spawnCenter = geo.spawn;
+
+  return (
+    <>
+      <div
+        className={`relative mx-auto mt-4 overflow-hidden rounded-[2rem] bg-gradient-to-br ${room.floor} shadow-sm ring-1 ${room.ring}`}
+        style={{
+          aspectRatio: `${layout.cols} / ${layout.rows}`,
+          // Fit within the column width AND ~62% of the viewport height, keeping
+          // the room's aspect ratio — so even tall maps never need scrolling.
+          width: `min(100%, calc(62vh * ${layout.cols / layout.rows}))`,
+        }}
+      >
+        {/* Floor rooms */}
+        {layout.cells.map((cell) => {
+          const r = geo.floors[cell.id];
+          return (
+            <div
+              key={cell.id}
+              className={`absolute z-0 rounded-lg bg-gradient-to-br ${room.wall} opacity-90`}
+              style={{ left: pct(r.x, W), top: pct(r.y, H), width: pct(r.w, W), height: pct(r.h, H) }}
+            />
+          );
+        })}
+
+        {/* Fog of war — every room except the one you're in is fully dark. */}
+        {layout.cells.map((cell) => {
+          if (cell.id === curRoom) return null;
+          const r = geo.floors[cell.id];
+          return (
+            <div
+              key={`fog-${cell.id}`}
+              className="absolute z-[25] rounded-lg bg-slate-950 transition-colors duration-300"
+              style={{ left: pct(r.x, W), top: pct(r.y, H), width: pct(r.w, W), height: pct(r.h, H) }}
+            />
+          );
+        })}
+
+        {/* Walls (above fog so the maze stays legible) */}
+        {geo.walls.map((w, i) => (
+          <div
+            key={i}
+            className="absolute z-30 rounded-[3px] bg-slate-900/85 shadow"
+            style={{ left: pct(w.x, W), top: pct(w.y, H), width: pct(w.w, W), height: pct(w.h, H) }}
+          />
+        ))}
+
+        {/* Room labels (above walls; only the room you're currently in) */}
+        {layout.cells.map((cell) => {
+          if (cell.id !== curRoom) return null;
+          const r = geo.floors[cell.id];
+          return (
+            <span
+              key={`lbl-${cell.id}`}
+              className="absolute z-[35] -translate-x-1/2 whitespace-nowrap rounded-full bg-slate-900/55 px-2 py-0.5 font-fun text-[9px] font-700 text-white/80 sm:text-[11px]"
+              style={{ left: pct(r.x + r.w / 2, W), top: pct(r.y + 6, H) }}
+            >
+              {cell.label}
+            </span>
+          );
+        })}
+
+        {/* Notes */}
+        {(layout.notes ?? []).map((n) => {
+          const r = geo.floors[n.room];
+          if (!r) return null;
+          const x = r.x + r.w / 2;
+          const y = r.y + r.h * 0.3;
+          return (
+            <ObjMarker
+              key={n.id}
+              x={pct(x, W)}
+              y={pct(y, H)}
+              icon="note"
+              ringed={near?.key === `n-${n.id}`}
+              onClick={() => setOpenNote(n.id)}
+            />
+          );
+        })}
+
+        {/* Sink + recycler stations (recycle mode) */}
+        {sinkPt && (
+          <div
+            className="absolute z-20 flex flex-col items-center gap-0.5 -translate-x-1/2 -translate-y-1/2"
+            style={{ left: pct(sinkPt.x, W), top: pct(sinkPt.y, H) }}
+            title="Wash sink"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-sky-500 text-white shadow-md ring-2 ring-white/70 sm:h-11 sm:w-11">
+              <StationIcon name="wash" className="h-5 w-5 sm:h-6 sm:w-6" />
+            </span>
+            <span className="rounded-full bg-slate-900/60 px-1.5 font-fun text-[8px] font-700 text-white sm:text-[10px]">Wash</span>
+          </div>
+        )}
+        {depositPt && (
+          <div
+            className="absolute z-20 flex flex-col items-center gap-0.5 -translate-x-1/2 -translate-y-1/2"
+            style={{ left: pct(depositPt.x, W), top: pct(depositPt.y, H) }}
+            title="Recycler"
+          >
+            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-md ring-2 ring-white/70 sm:h-11 sm:w-11">
+              <StationIcon name="recycle" className="h-5 w-5 sm:h-6 sm:w-6" />
+            </span>
+            <span className="rounded-full bg-slate-900/60 px-1.5 font-fun text-[8px] font-700 text-white sm:text-[10px]">Recycle</span>
+          </div>
+        )}
+
+        {/* World items — loose / charged / set-down / delivered (carried one is
+            drawn on the character). */}
+        {carryItems.map((it, i) => {
+          if (carrying === it.id) return null;
+          const p = itemPos(it, i);
+          const done = delivered.includes(it.id);
+          const ready = charged.includes(it.id) || washed.includes(it.id);
+          const pickable = isPickable(it);
+          return (
+            <button
+              key={it.id}
+              onClick={() => pickable && pickUp(it.id)}
+              disabled={!pickable}
+              className={`absolute z-20 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow transition sm:h-10 sm:w-10 ${
+                done
+                  ? "bg-emerald-200/80 text-emerald-700 ring-1 ring-emerald-300"
+                  : pickable
+                    ? `bg-white text-coral ${near?.key === `i-${it.id}` ? "ring-2 ring-coral scale-110 animate-pulse" : "ring-1 ring-white/60"}`
+                    : "cursor-default bg-slate-700/60 text-white/50 opacity-50"
+              } ${ready && !done ? "ring-2 ring-amber-300" : ""}`}
+              style={{ left: pct(p.x, W), top: pct(p.y, H) }}
+              title={coreNumber(it.id) ? `Core ${coreNumber(it.id)}` : pickable ? it.label : done ? `${it.label} (done)` : it.label}
+            >
+              <StationIcon name={itemIcon(it.id)} className="h-5 w-5 sm:h-6 sm:w-6" />
+              {coreNumber(it.id) && !done && (
+                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 font-fun text-[9px] font-700 text-white ring-1 ring-white/70 sm:h-5 sm:w-5 sm:text-[10px]">
+                  {coreNumber(it.id)}
+                </span>
+              )}
+            </button>
+          );
+        })}
+
+        {/* Machines */}
+        {layout.cells.map((cell) => {
+          if (!cell.stationId) return null;
+          const station = room.stations.find((s) => s.id === cell.stationId);
+          if (!station) return null;
+          const c = centerOf(geo.floors[cell.id]);
+          const solved = solvedIds.includes(cell.stationId);
+          const gated = cellLocked(cell);
+          return (
+            <button
+              key={cell.id}
+              onClick={() => (gated ? setFlash(lockMessage(cell)) : setOpenId(cell.stationId!))}
+              className={`absolute z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl shadow-md transition sm:h-14 sm:w-14 ${
+                gated
+                  ? "bg-slate-800 text-amber-400/80 ring-1 ring-slate-600"
+                  : solved
+                    ? "bg-mint/30 text-emerald-600 ring-1 ring-mint/50"
+                    : "bg-white text-slate-700 ring-1 ring-white/70"
+              } ${near?.key === `m-${cell.id}` ? "scale-110 ring-2 ring-coral" : ""}`}
+              style={{ left: pct(c.x, W), top: pct(c.y, H) }}
+              title={gated ? "Locked — recycle the bottles first" : station.label}
+            >
+              <StationIcon
+                name={gated ? "lock" : solved ? "check" : STATION_ICON[`${room.slug}:${cell.stationId}`] ?? "panel"}
+                className="h-6 w-6 sm:h-8 sm:w-8"
+              />
+            </button>
+          );
+        })}
+
+        {/* Exit door */}
+        {(() => {
+          const er = geo.floors[layout.exit];
+          if (!er) return null;
+          const c = centerOf(er);
+          return (
+            <button
+              onClick={() => exitReady && performAction(near?.kind === "exit" ? near : { key: "exit", kind: "exit", id: layout.exit, label: "", x: c.x, y: c.y, enabled: true })}
+              className={`absolute z-20 flex h-12 w-9 -translate-x-1/2 items-center justify-center rounded-md shadow-md transition sm:h-14 sm:w-11 ${
+                exitReady ? "bg-amber-300 text-slate-800 ring-2 ring-amber-500 animate-pulse" : "bg-slate-800 text-amber-400/80 ring-1 ring-slate-600"
+              }`}
+              style={{ left: pct(c.x, W), top: pct(er.y + er.h - 4, H), transform: "translate(-50%, -100%)" }}
+              title={exitReady ? "Open the door" : "Locked — finish the room first"}
+            >
+              <StationIcon name={exitReady ? "door" : "lock"} className="h-6 w-6 sm:h-7 sm:w-7" />
+            </button>
+          );
+        })()}
+
+        {/* Other players (co-op) — placed in their current room */}
+        {others.map((p, i) => {
+          const r = p.atStation ? geo.floors[p.atStation] : null;
+          if (!r) return null;
+          return (
+            <div
+              key={p.learnerId}
+              className="absolute z-20 -translate-x-1/2 -translate-y-1/2 text-center"
+              style={{ left: pct(r.x + r.w * (0.3 + (i % 3) * 0.2), W), top: pct(r.y + r.h * 0.75, H) }}
+            >
+              <div className="text-xl opacity-80 sm:text-2xl">{room.character}</div>
+              <div className="rounded-full bg-slate-900/60 px-1.5 text-[8px] font-700 text-white">{p.name}</div>
+            </div>
+          );
+        })}
+
+        {/* You */}
+        <div
+          ref={charRef}
+          className="pointer-events-none absolute z-40 -translate-x-1/2 -translate-y-1/2 text-center"
+          style={{ left: pct(spawnCenter.x, W), top: pct(spawnCenter.y, H) }}
+        >
+          {heldItem && (
+            <div className="relative mx-auto mb-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white text-coral shadow sm:h-6 sm:w-6">
+              <StationIcon name={itemIcon(heldItem.id)} className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+              {coreNumber(heldItem.id) && (
+                <span className="absolute -right-1.5 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-900 font-fun text-[8px] font-700 text-white ring-1 ring-white/70 sm:h-4 sm:w-4 sm:text-[9px]">
+                  {coreNumber(heldItem.id)}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="text-2xl drop-shadow sm:text-3xl">{room.character}</div>
+          {isCoop && <div className="rounded-full bg-coral px-1.5 text-[8px] font-700 text-white">You</div>}
+        </div>
+
+        {/* Transient carry hint */}
+        {flash && (
+          <div className="pointer-events-none absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded-full bg-slate-900/80 px-4 py-1.5 font-fun text-xs font-700 text-white shadow-lg sm:text-sm">
+            {flash}
+          </div>
+        )}
+
+        {/* Action button — falls back to "Set down" whenever you're carrying. */}
+        {(near || carrying) && (
+          <button
+            onClick={() => performAction(near)}
+            className="absolute bottom-4 right-4 z-50 rounded-full bg-coral px-5 py-3 font-fun text-sm font-700 text-white shadow-lg ring-2 ring-white/50 transition hover:scale-105"
+          >
+            {near?.label ?? `Set down ${labelOf(carrying)}`}
+          </button>
+        )}
+      </div>
+
+      {/* Status bar */}
+      <div className="mt-3 flex flex-wrap items-center justify-center gap-2 font-fun text-sm font-700 text-slate-500">
+        <span className="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-100">
+          🧩 {solvedIds.length}/{total} puzzles
+        </span>
+        {carryItems.length > 0 && (
+          <span className="rounded-full bg-white px-3 py-1 shadow-sm ring-1 ring-slate-100">
+            {carry?.mode === "recycle" ? "♻️" : "📦"} {delivered.length}/{carryItems.length}{" "}
+            {carry?.mode === "recycle" ? "recycled" : carry?.mode === "direct" ? "placed" : "delivered"}
+          </span>
+        )}
+        {carrying && (
+          <span className="rounded-full bg-coral/10 px-3 py-1 text-coral ring-1 ring-coral/20">
+            Carrying {coreNumber(carrying) ? `core ${coreNumber(carrying)}` : labelOf(carrying)} {coreNumber(carrying) ? "" : heldItem?.emoji}
+            {carriedReady ? (carry?.mode === "recycle" ? " ✨ clean" : " ⚡ charged") : ""}
+          </span>
+        )}
+        <span className="rounded-full bg-white px-3 py-1 text-slate-400 shadow-sm ring-1 ring-slate-100">
+          Move with the arrow keys or WASD · Space to interact
+        </span>
+      </div>
+
+      {/* Puzzle modal (same as RoomScene) */}
+      {openStation && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <button aria-label="Close puzzle" onClick={closeModal} className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
+          <div className="relative z-10 max-h-[90vh] w-full max-w-lg overflow-y-auto rounded-[2rem] bg-white p-6 shadow-2xl ring-1 ring-amber-100">
+            <div className="flex items-center gap-2 font-fun font-700 text-slate-700">
+              <StationIcon
+                name={STATION_ICON[`${room.slug}:${openStation.id}`] ?? "panel"}
+                className="h-6 w-6 text-slate-500"
+              />
+              {openStation.label}
+              <button
+                onClick={closeModal}
+                aria-label="Close"
+                className="ml-auto flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-slate-100 text-lg text-slate-500 transition hover:bg-slate-200 hover:text-slate-700"
+              >
+                ✕
+              </button>
+            </div>
+            {reviewing ? (
+              <div className="mt-4">
+                <div className="rounded-2xl bg-sky/10 py-2 text-center font-fun text-sm font-700 text-sky-700 ring-1 ring-sky/20">
+                  ✅ Already solved — here&apos;s a recap.
+                </div>
+                <PuzzleReview puzzle={openStation.puzzle} wordHints={wordHints} />
+                <div className="mt-4 rounded-2xl bg-mint/15 p-4 text-center ring-1 ring-mint/30">
+                  <p className="font-round text-sm text-slate-600">{openStation.puzzle.learn}</p>
+                </div>
+                <div className="mt-4 text-center">
+                  <button onClick={closeModal} className="rounded-full bg-coral px-7 py-2.5 font-fun font-700 text-white shadow transition hover:scale-105">
+                    Got it 👍
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <PuzzleView
+                  key={openStation.id}
+                  puzzle={openStation.puzzle}
+                  solved={lockPuzzle}
+                  hiddenWords={hiddenWords}
+                  wordHints={wordHints}
+                  showCoords
+                  orderUnlocked={orderUnlocked}
+                  onSolved={handleSolved}
+                  onWrong={() => setWrongCount((c) => c + 1)}
+                />
+                {!justSolved && (
+                  <div className="mt-5 text-center">
+                    {hintShown ? (
+                      <p className="font-round text-sm text-amber-600">💡 {openStation.puzzle.hint}</p>
+                    ) : (
+                      <button
+                        onClick={() => setHintShown(true)}
+                        className="font-fun text-sm font-600 text-slate-400 underline-offset-2 hover:text-amber-600 hover:underline"
+                      >
+                        Need a hint? 💡
+                      </button>
+                    )}
+                    {wrongCount > 0 && <p className="mt-2 font-fun text-sm font-600 text-coral">Not quite — give it another go! 🔁</p>}
+                  </div>
+                )}
+                {justSolved && (
+                  <div className="mt-6 rounded-2xl bg-mint/15 p-5 text-center ring-1 ring-mint/30">
+                    <div className="font-fun text-lg font-700 text-emerald-700">🔓 Solved!</div>
+                    <p className="mt-1 font-round text-sm text-slate-600">{openStation.puzzle.learn}</p>
+                    <button onClick={closeModal} className="mt-4 rounded-full bg-coral px-7 py-2.5 font-fun font-700 text-white shadow transition hover:scale-105">
+                      Keep exploring 🔍
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Clue note */}
+      {noteData && <NoteCard note={noteData} room={room} onClose={() => setOpenNote(null)} />}
+
+      {/* Exit locks (reused) */}
+      {doorOpen && usesCodeExit && (
+        <ExitKeypad slots={codeSlots} code={exitCode} outro={room.outro} onClose={() => setDoorOpen(false)} onEscape={onEscape} />
+      )}
+      {doorOpen && cipherExit && (
+        <CipherExitKeypad exit={cipherExit} solvedIds={solvedIds} outro={room.outro} onClose={() => setDoorOpen(false)} onEscape={onEscape} />
+      )}
+      {doorOpen && unscrambleExit && (
+        <UnscrambleExitKeypad
+          exit={unscrambleExit}
+          solvedIds={solvedIds}
+          outro={room.outro}
+          done={coresDone}
+          onWordSolved={(i) => setCoresDone((d) => (d.includes(i) ? d : [...d, i]))}
+          onClose={() => setDoorOpen(false)}
+          onEscape={onEscape}
+        />
+      )}
+    </>
+  );
+}
+
+/** A clickable round world object (clue note). */
+function ObjMarker({
+  x,
+  y,
+  icon,
+  ringed,
+  onClick,
+}: {
+  x: string;
+  y: string;
+  icon: string;
+  ringed: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`absolute z-20 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl bg-amber-50 text-amber-700 shadow transition sm:h-9 sm:w-9 ${
+        ringed ? "scale-110 ring-2 ring-coral" : "ring-1 ring-amber-200"
+      }`}
+      style={{ left: x, top: y }}
+    >
+      <StationIcon name={icon} className="h-5 w-5 sm:h-6 sm:w-6" />
+    </button>
+  );
+}
+
+/** Read-only clue / "lab note" card (never "solved"). */
+function NoteCard({ note, room, onClose }: { note: RoomNote; room: EscapeRoom; onClose: () => void }) {
+  const carry = room.layout?.carry;
+  const chargeCarry = carry?.mode === "charge" ? carry : null;
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <button aria-label="Close note" onClick={onClose} className="absolute inset-0 bg-slate-900/50 backdrop-blur-sm" />
+      <div className="relative z-10 w-full max-w-sm rounded-[2rem] bg-amber-50 p-6 shadow-2xl ring-1 ring-amber-200">
+        <div className="flex items-center gap-2 font-fun font-700 text-amber-800">
+          <StationIcon name="note" className="h-6 w-6 text-amber-600" />
+          {note.title}
+          <button
+            onClick={onClose}
+            aria-label="Close"
+            className="ml-auto flex h-9 w-9 items-center justify-center rounded-full bg-amber-100 text-lg text-amber-700 transition hover:bg-amber-200"
+          >
+            ✕
+          </button>
+        </div>
+        <p className="mt-3 font-round text-sm text-slate-700">{note.body}</p>
+        {note.art === "crossing" && (
+          <div className="mt-4 rounded-2xl bg-white p-4 text-center font-mono text-sm text-slate-600 ring-1 ring-amber-100">
+            <div className="mt-1 text-coral">　　2　↓　(Column)</div>
+            <div className="mt-1 text-coral">1　→　⭐　　　　　　</div>
+            <div className="mt-1 text-coral">(Row)　　　　　　　　　　　</div>
+            <div className="mt-2 text-xs text-slate-400">Read the ⭐&apos;s Column &amp; Row.</div>
+          </div>
+        )}
+        {note.art === "coremap" && chargeCarry && room.layout && (() => {
+          const L = room.layout!;
+          const stationNo = (sid?: string) => {
+            const i = chargeCarry.items.findIndex((it) => it.station === sid);
+            return i >= 0 ? i + 1 : null;
+          };
+          return (
+            <div className="mt-4 rounded-2xl bg-white p-3 ring-1 ring-amber-100">
+              <div
+                className="grid gap-1"
+                style={{ gridTemplateColumns: `repeat(${L.cols}, 1fr)`, gridTemplateRows: `repeat(${L.rows}, minmax(2.4rem, 1fr))` }}
+              >
+                {L.cells.map((cell) => {
+                  const no = stationNo(cell.stationId);
+                  const isCore = cell.id === chargeCarry.coreRoom;
+                  const isSuit = cell.id === chargeCarry.suitRoom;
+                  const isSpawn = cell.id === L.spawn && !isCore && !isSuit && no == null;
+                  return (
+                    <div
+                      key={cell.id}
+                      style={{ gridColumn: `${cell.gx + 1} / span ${cell.gw ?? 1}`, gridRow: `${cell.gy + 1} / span ${cell.gh ?? 1}` }}
+                      className={`flex flex-col items-center justify-center rounded-lg p-1 text-center ${
+                        no != null
+                          ? "bg-coral/15 ring-1 ring-coral/40"
+                          : isCore
+                            ? "bg-amber-100"
+                            : isSuit
+                              ? "bg-mint/30"
+                              : "bg-slate-100"
+                      }`}
+                    >
+                      {no != null ? (
+                        <span className="flex h-6 w-6 items-center justify-center rounded-full bg-coral font-fun text-sm font-700 text-white">{no}</span>
+                      ) : isCore ? (
+                        <div className="flex gap-0.5">
+                          {chargeCarry.items.map((_, i) => (
+                            <span key={i} className="flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 text-[8px] font-700 text-white">
+                              {i + 1}
+                            </span>
+                          ))}
+                        </div>
+                      ) : isSuit ? (
+                        <span className="text-base">🦸</span>
+                      ) : isSpawn ? (
+                        <span className="text-base">🚪</span>
+                      ) : null}
+                      <span className="mt-0.5 text-[7px] font-600 leading-tight text-slate-500">{cell.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
+              <p className="mt-2 text-center text-[10px] text-slate-500">
+                🔘 cores wait in the {L.cells.find((c) => c.id === chargeCarry.coreRoom)?.label ?? "Landing"} · carry each to the charger with its number.
+              </p>
+            </div>
+          );
+        })()}
+        <div className="mt-5 text-center">
+          <button onClick={onClose} className="rounded-full bg-amber-500 px-7 py-2.5 font-fun font-700 text-white shadow transition hover:scale-105">
+            Got it 👍
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -1195,12 +2188,15 @@ const STATION_ICON: Record<string, string> = {
   "green-lab:panel": "solar",
   "green-lab:bins": "bin",
   "green-lab:circuit": "plug",
-  "sg-history:merlion": "lion",
-  "sg-history:timeline": "box",
-  "sg-history:river": "boat",
-  "sg-culture:hawker": "skewer",
-  "sg-culture:lights": "lantern",
-  "sg-culture:drums": "drum",
+  "sg-history:merlion": "note",
+  "sg-history:timeline": "panel",
+  "sg-history:river": "lion",
+  "sg-culture:food": "skewer",
+  "sg-culture:festival": "lantern",
+  "sg-culture:flower": "flower",
+  "sg-culture:fruit": "key",
+  "sg-culture:crossword": "grid",
+  "sg-culture:lockpad": "lock",
   "sg-nature:river": "water",
   "sg-nature:seed": "sprout",
   "sg-nature:ranger": "key",
@@ -1374,6 +2370,93 @@ function StationIcon({ name, className }: { name: string; className?: string }) 
         <circle cx="12" cy="11" r="1" fill="currentColor" stroke="none" />
       </>
     ),
+    note: (
+      <>
+        <path d="M6 3h8l4 4v14H6Z" />
+        <path d="M14 3v4h4" />
+        <line x1="8.5" y1="11" x2="15.5" y2="11" />
+        <line x1="8.5" y1="14" x2="15.5" y2="14" />
+        <line x1="8.5" y1="17" x2="13" y2="17" />
+      </>
+    ),
+    bottle: (
+      <>
+        <path d="M10 3h4v3l1.4 2.4a3 3 0 0 1 .6 1.8V19a2 2 0 0 1-2 2H10a2 2 0 0 1-2-2v-8.8a3 3 0 0 1 .6-1.8L10 6Z" />
+        <line x1="8" y1="13" x2="16" y2="13" />
+      </>
+    ),
+    core: (
+      <>
+        <circle cx="12" cy="12" r="7" />
+        <circle cx="12" cy="12" r="3" />
+        <line x1="12" y1="2" x2="12" y2="5" />
+        <line x1="12" y1="19" x2="12" y2="22" />
+        <line x1="2" y1="12" x2="5" y2="12" />
+        <line x1="19" y1="12" x2="22" y2="12" />
+      </>
+    ),
+    door: (
+      <>
+        <path d="M14 21V3.5L6 5.5V21" />
+        <line x1="4" y1="21" x2="20" y2="21" />
+        <line x1="14" y1="3.5" x2="20" y2="3.5" />
+        <line x1="20" y1="3.5" x2="20" y2="21" />
+        <circle cx="11.4" cy="12" r="1" fill="currentColor" stroke="none" />
+      </>
+    ),
+    lock: (
+      <>
+        <rect x="5" y="10" width="14" height="10" rx="2" />
+        <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+        <circle cx="12" cy="14.5" r="1.2" fill="currentColor" stroke="none" />
+        <line x1="12" y1="15.5" x2="12" y2="17.5" />
+      </>
+    ),
+    flag: (
+      <>
+        <line x1="6" y1="3" x2="6" y2="21" />
+        <path d="M6 4h11l-2.5 3.5L17 11H6Z" />
+      </>
+    ),
+    grid: (
+      <>
+        <rect x="4" y="4" width="16" height="16" rx="1.5" />
+        <line x1="4" y1="9.3" x2="20" y2="9.3" />
+        <line x1="4" y1="14.6" x2="20" y2="14.6" />
+        <line x1="9.3" y1="4" x2="9.3" y2="20" />
+        <line x1="14.6" y1="4" x2="14.6" y2="20" />
+        <rect x="9.3" y="9.3" width="5.3" height="5.3" fill="currentColor" stroke="none" opacity="0.5" />
+      </>
+    ),
+    flower: (
+      <>
+        <circle cx="12" cy="12" r="2" />
+        <path d="M12 10c-1-2.5-4-2.5-4 0s3 4 4 4 4-1.5 4-4-3-2.5-4 0Z" opacity="0.9" />
+        <path d="M10 12c-2.5-1-2.5-4 0-4s4 3 4 4-1.5 4-4 4-2.5-3 0-4Z" opacity="0.9" />
+        <line x1="12" y1="17" x2="12" y2="22" />
+        <path d="M12 20c1.5 0 2.5-1 2.5-2.5" />
+      </>
+    ),
+    wash: (
+      <>
+        <path d="M5 11h14v5a3 3 0 0 1-3 3H8a3 3 0 0 1-3-3Z" />
+        <line x1="4" y1="11" x2="20" y2="11" />
+        <path d="M12 11V6a2 2 0 0 1 4 0" />
+        <line x1="8" y1="14.5" x2="8" y2="16" />
+        <line x1="11" y1="14.5" x2="11" y2="16.5" />
+        <line x1="14" y1="14.5" x2="14" y2="16" />
+      </>
+    ),
+    recycle: (
+      <>
+        <path d="M7 19H4.8a1.83 1.83 0 0 1-1.57-.88 1.79 1.79 0 0 1 0-1.79L7.2 9.5" />
+        <path d="M11 19h8.2a1.83 1.83 0 0 0 1.56-.89 1.78 1.78 0 0 0 0-1.78l-1.23-2.12" />
+        <path d="m14 16-3 3 3 3" />
+        <path d="M8.29 13.6 7.2 9.5 3.1 10.6" />
+        <path d="m9.34 5.81 1.1-1.89A1.83 1.83 0 0 1 12 3a1.78 1.78 0 0 1 1.55.89l3.94 6.84" />
+        <path d="m13.38 9.63 4.1 1.1 1.1-4.1" />
+      </>
+    ),
   };
   return (
     <svg
@@ -1470,6 +2553,305 @@ function floorPattern(kind: EscapeRoom["floorKind"]): React.CSSProperties {
   }
 }
 
+/** Fisher–Yates shuffle returning a new array. */
+function shuffleArr<T>(arr: T[]): T[] {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** Default emoji palette for the Symbol Lock (8 distinct "glyphs"). */
+const SYMBOL_GLYPHS = ["🔴", "🔷", "🔺", "⭐", "🟩", "🟣", "➕", "⬛"];
+
+/* --- Crossword: tap each answer into its numbered row; a gold column spells a
+   secret word (ported from the Android `Crossword`). ------------------- */
+function CrosswordPuzzle({ puzzle, solved, onSolved }: PuzzleProps<Extract<EscapeRoomPuzzle, { kind: "crossword" }>>) {
+  const rows = puzzle.rows;
+  const gridCols = useMemo(() => Math.max(...rows.map((r) => r.offset + r.word.length)), [rows]);
+  const trayOrder = useMemo(() => shuffleArr(rows.map((_, i) => i)), [rows]);
+  const [placed, setPlaced] = useState<(number | null)[]>(() => rows.map(() => null));
+  const [picked, setPicked] = useState<number | null>(null);
+
+  const display = solved ? rows.map((_, i) => i) : placed;
+  const rowOfWord = (w: number) => display.findIndex((p) => p === w);
+  const complete = rows.every((_, r) => placed[r] === r);
+
+  useEffect(() => {
+    if (complete && !solved) onSolved();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [complete]);
+
+  function tapTray(w: number) {
+    if (solved) return;
+    setPicked((p) => (p === w ? null : w));
+  }
+  function tapRow(r: number) {
+    if (solved) return;
+    if (placed[r] != null) {
+      setPlaced((p) => p.map((x, i) => (i === r ? null : x)));
+      return;
+    }
+    if (picked == null) return;
+    setPlaced((p) => p.map((x, i) => (i === r ? picked : x === picked ? null : x)));
+    setPicked(null);
+  }
+
+  return (
+    <div className="mt-4 text-center">
+      {puzzle.emoji && <div className="text-4xl">{puzzle.emoji}</div>}
+      <p className="mt-2 font-fun text-base font-700 text-slate-800">{puzzle.prompt}</p>
+
+      <div className="mt-4 flex justify-center overflow-x-auto">
+        <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}>
+          {rows.map((row, r) => (
+            <Fragment key={r}>
+              {Array.from({ length: gridCols }).map((_, c) => {
+                const within = c >= row.offset && c < row.offset + row.word.length;
+                if (!within) return <span key={c} className="h-8 w-8 sm:h-9 sm:w-9" />;
+                const w = display[r];
+                const ch = w != null ? rows[w].word[c - row.offset] ?? "" : "";
+                const isSecret = c === puzzle.secretCol;
+                return (
+                  <button
+                    key={c}
+                    onClick={() => tapRow(r)}
+                    disabled={solved}
+                    className={`relative flex h-8 w-8 items-center justify-center rounded-md font-mono text-sm font-700 ring-1 transition disabled:cursor-default sm:h-9 sm:w-9 ${
+                      isSecret
+                        ? "bg-sunny/70 text-slate-900 ring-amber-400"
+                        : w != null
+                          ? "bg-mint/20 text-emerald-800 ring-emerald-200"
+                          : "bg-amber-50 text-slate-400 ring-amber-100 hover:bg-amber-100"
+                    }`}
+                  >
+                    {c === row.offset && <span className="absolute left-0.5 top-0 text-[8px] leading-none text-slate-400">{row.num}</span>}
+                    {ch}
+                  </button>
+                );
+              })}
+            </Fragment>
+          ))}
+        </div>
+      </div>
+
+      {solved ? (
+        <p className="mt-3 font-fun text-sm font-700 text-amber-600">⭐ The gold column spells {puzzle.secret.toUpperCase()}</p>
+      ) : (
+        <>
+          <div className="mt-4 flex flex-wrap justify-center gap-2">
+            {trayOrder.map((w) =>
+              rowOfWord(w) >= 0 ? null : (
+                <button
+                  key={w}
+                  onClick={() => tapTray(w)}
+                  className={`rounded-xl px-3 py-2 font-fun text-sm font-700 ring-2 transition ${
+                    picked === w ? "scale-105 bg-coral text-white ring-coral" : "bg-white text-slate-700 ring-amber-200 hover:bg-amber-50"
+                  }`}
+                >
+                  {rows[w].word}
+                </button>
+              ),
+            )}
+          </div>
+          {rows.some((row) => row.clue) && (
+            <div className="mx-auto mt-3 grid max-w-sm gap-1 text-left text-xs text-slate-500">
+              {rows.map((row) =>
+                row.clue ? (
+                  <p key={row.num}>
+                    <span className="font-700 text-slate-600">{row.num}.</span> {row.clue}
+                  </p>
+                ) : null,
+              )}
+            </div>
+          )}
+          <p className="mt-3 font-round text-xs text-slate-400">Tap a word, then tap its numbered row. Tap a filled row to take the word back.</p>
+        </>
+      )}
+    </div>
+  );
+}
+
+/* --- Unscramble: tap the shuffled letter tiles in order to spell each word,
+   one word at a time (ported from the Android `Unscramble`). ----------- */
+function UnscramblePuzzle({ puzzle, solved, onSolved, onWrong }: PuzzleProps<Extract<EscapeRoomPuzzle, { kind: "unscramble" }>>) {
+  const words = useMemo(() => puzzle.words.map((w) => w.toUpperCase()), [puzzle.words]);
+  const [wi, setWi] = useState(0);
+  const [typed, setTyped] = useState<number[]>([]); // scrambled-tile indices, in tap order
+  const [bad, setBad] = useState(false);
+  const wiSafe = Math.min(wi, words.length - 1);
+  const word = words[wiSafe];
+  const scrambled = useMemo(() => {
+    let s: string[];
+    do {
+      s = shuffleArr(word.split(""));
+    } while (s.join("") === word && word.length > 1);
+    return s;
+  }, [word]);
+  const used = new Set(typed);
+
+  function tapTile(i: number) {
+    if (solved || used.has(i) || typed.length >= word.length) return;
+    const next = [...typed, i];
+    setTyped(next);
+    if (next.length === word.length) {
+      if (next.map((k) => scrambled[k]).join("") === word) {
+        if (wi + 1 >= words.length) onSolved();
+        else {
+          setWi(wi + 1);
+          setTyped([]);
+        }
+      } else {
+        onWrong();
+        setBad(true);
+        setTimeout(() => {
+          setTyped([]);
+          setBad(false);
+        }, 500);
+      }
+    }
+  }
+
+  return (
+    <div className="mt-4 text-center">
+      {puzzle.emoji && <div className="text-4xl">{puzzle.emoji}</div>}
+      <p className="mt-2 font-fun text-base font-700 text-slate-800">{puzzle.prompt}</p>
+      {words.length > 1 && (
+        <p className="mt-1 font-fun text-sm font-700 text-slate-400">
+          Word {wiSafe + 1} of {words.length}
+        </p>
+      )}
+      {puzzle.clues?.[wiSafe] && <p className="mt-2 font-round text-sm text-amber-600">Clue: {puzzle.clues[wiSafe]}</p>}
+
+      {/* Answer slots */}
+      <div className={`mt-4 flex justify-center gap-1.5 ${bad ? "animate-pulse" : ""}`}>
+        {word.split("").map((_, i) => (
+          <button
+            key={i}
+            onClick={() => !solved && setTyped((t) => (i === t.length - 1 ? t.slice(0, -1) : t))}
+            disabled={solved}
+            className={`flex h-11 w-11 items-center justify-center rounded-xl font-mono text-xl font-700 ring-2 transition ${
+              bad ? "bg-coral/15 text-coral ring-coral/40" : i < typed.length ? "bg-mint/20 text-emerald-800 ring-emerald-200" : "bg-slate-100 text-slate-400 ring-slate-200"
+            }`}
+          >
+            {solved ? word[i] : typed[i] != null ? scrambled[typed[i]] : ""}
+          </button>
+        ))}
+      </div>
+
+      {/* Letter tiles */}
+      {!solved && (
+        <div className="mt-4 flex flex-wrap justify-center gap-1.5">
+          {scrambled.map((ch, i) =>
+            used.has(i) ? (
+              <span key={i} className="h-11 w-11 rounded-xl bg-slate-50 ring-1 ring-slate-100" />
+            ) : (
+              <button
+                key={i}
+                onClick={() => tapTile(i)}
+                className="flex h-11 w-11 items-center justify-center rounded-xl bg-white font-mono text-xl font-700 text-slate-700 ring-2 ring-amber-200 transition hover:scale-105 hover:bg-amber-50"
+              >
+                {ch}
+              </button>
+            ),
+          )}
+        </div>
+      )}
+      <p className="mt-3 font-round text-xs text-slate-400">Tap the letters in order. Tap the last filled box to take it back.</p>
+    </div>
+  );
+}
+
+/* --- Symbol Lock: read the letter→symbol key, then tap the symbols to spell
+   the secret word (ported from the Android `SymbolLock`). -------------- */
+function SymbolLockPuzzle({ puzzle, solved, onSolved, onWrong }: PuzzleProps<Extract<EscapeRoomPuzzle, { kind: "symbol-lock" }>>) {
+  const word = puzzle.word.toUpperCase();
+  const symbols = puzzle.symbols ?? SYMBOL_GLYPHS;
+  const decoys = puzzle.decoys ?? 3;
+  const letters = useMemo(() => Array.from(new Set(word.split(""))), [word]);
+  const { glyphOf, palette, target } = useMemo(() => {
+    const order = shuffleArr(symbols.map((_, i) => i));
+    const map = new Map<string, string>();
+    letters.forEach((ch, i) => map.set(ch, symbols[order[i % order.length]]));
+    const tgt = word.split("").map((ch) => map.get(ch)!);
+    const extra = order.slice(letters.length, letters.length + decoys).map((i) => symbols[i]);
+    const pal = shuffleArr(Array.from(new Set([...tgt, ...extra])));
+    return { glyphOf: map, palette: pal, target: tgt };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [word]);
+  const [entered, setEntered] = useState<string[]>([]);
+  const [bad, setBad] = useState(false);
+
+  function tap(g: string) {
+    if (solved || entered.length >= word.length) return;
+    const next = [...entered, g];
+    setEntered(next);
+    if (next.length === word.length) {
+      if (next.join("|") === target.join("|")) onSolved();
+      else {
+        onWrong();
+        setBad(true);
+        setTimeout(() => {
+          setEntered([]);
+          setBad(false);
+        }, 500);
+      }
+    }
+  }
+
+  const shown = solved ? target : entered;
+
+  return (
+    <div className="mt-4 text-center">
+      {puzzle.emoji && <div className="text-4xl">{puzzle.emoji}</div>}
+      <p className="mt-2 font-fun text-base font-700 text-slate-800">{puzzle.prompt}</p>
+
+      <div className="mt-3 inline-block rounded-xl bg-mint/15 px-4 py-1.5 font-fun text-lg font-700 tracking-[0.3em] text-emerald-700 ring-1 ring-emerald-200">
+        {word}
+      </div>
+
+      <div className="mt-3 flex flex-wrap justify-center gap-2">
+        {letters.map((ch) => (
+          <span key={ch} className="flex items-center gap-1 rounded-lg bg-amber-50 px-2.5 py-1 font-fun text-sm font-700 text-slate-600 ring-1 ring-amber-100">
+            {ch} <span className="text-slate-400">=</span> <span className="text-xl">{glyphOf.get(ch)}</span>
+          </span>
+        ))}
+      </div>
+
+      <div className="mt-4 flex justify-center gap-2">
+        {word.split("").map((_, i) => (
+          <button
+            key={i}
+            onClick={() => !solved && setEntered((e) => e.slice(0, -1))}
+            disabled={solved}
+            className={`flex h-12 w-12 items-center justify-center rounded-xl text-2xl ring-2 transition ${
+              bad ? "bg-coral/15 ring-coral/40" : "bg-slate-100 ring-slate-200"
+            }`}
+          >
+            {shown[i] ?? ""}
+          </button>
+        ))}
+      </div>
+
+      {!solved && (
+        <div className="mt-4 flex flex-wrap justify-center gap-2">
+          {palette.map((g, i) => (
+            <button
+              key={i}
+              onClick={() => tap(g)}
+              className="flex h-12 w-12 items-center justify-center rounded-xl bg-white text-2xl ring-2 ring-amber-200 transition hover:scale-105 hover:bg-amber-50"
+            >
+              {g}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Renders the active puzzle and reports solved / wrong attempts to the parent. */
 function PuzzleView({
   puzzle,
@@ -1477,6 +2859,7 @@ function PuzzleView({
   hiddenWords,
   wordHints,
   showCoords,
+  orderUnlocked,
   onSolved,
   onWrong,
 }: {
@@ -1488,6 +2871,8 @@ function PuzzleView({
   wordHints?: Map<string, string>;
   /** Show numbered Column/Row axes on a word search (for coordinate exits). */
   showCoords?: boolean;
+  /** Trail maze: has the prerequisite "map" station been solved (route revealed)? */
+  orderUnlocked?: boolean;
   onSolved: () => void;
   onWrong: () => void;
 }) {
@@ -1501,8 +2886,24 @@ function PuzzleView({
     return <SortPuzzle puzzle={puzzle} solved={solved} onSolved={onSolved} onWrong={onWrong} />;
   if (puzzle.kind === "maze")
     return <MazePuzzle puzzle={puzzle} solved={solved} onSolved={onSolved} onWrong={onWrong} />;
+  if (puzzle.kind === "trailmaze")
+    return (
+      <TrailMazePuzzle
+        puzzle={puzzle}
+        solved={solved}
+        orderUnlocked={orderUnlocked}
+        onSolved={onSolved}
+        onWrong={onWrong}
+      />
+    );
   if (puzzle.kind === "fair")
     return <FairPuzzle puzzle={puzzle} solved={solved} onSolved={onSolved} onWrong={onWrong} />;
+  if (puzzle.kind === "unscramble")
+    return <UnscramblePuzzle puzzle={puzzle} solved={solved} onSolved={onSolved} onWrong={onWrong} />;
+  if (puzzle.kind === "crossword")
+    return <CrosswordPuzzle puzzle={puzzle} solved={solved} onSolved={onSolved} onWrong={onWrong} />;
+  if (puzzle.kind === "symbol-lock")
+    return <SymbolLockPuzzle puzzle={puzzle} solved={solved} onSolved={onSolved} onWrong={onWrong} />;
   if (puzzle.kind === "wordsearch")
     return (
       <WordSearchPuzzle
@@ -1987,6 +3388,57 @@ function SortPuzzle({ puzzle, solved, onSolved, onWrong }: PuzzleProps<Extract<E
 }
 
 /* ------------------------------------------------------------------ */
+/* Shared maze keyboard controls (arrow keys / WASD)                    */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Arrow-keys / WASD movement for the maze puzzles: a step on press, then
+ * auto-walk while held. A live `moveRef` keeps the once-bound listener on the
+ * latest closure. The room's own movement keys pause while a puzzle modal is
+ * open, so there's no clash.
+ */
+function useMazeKeys(move: (dr: number, dc: number) => void) {
+  const moveRef = useRef(move);
+  moveRef.current = move;
+  useEffect(() => {
+    const DIRS: Record<string, [number, number]> = {
+      arrowup: [-1, 0], w: [-1, 0],
+      arrowdown: [1, 0], s: [1, 0],
+      arrowleft: [0, -1], a: [0, -1],
+      arrowright: [0, 1], d: [0, 1],
+    };
+    let dir: [number, number] | null = null;
+    let timer: ReturnType<typeof setInterval> | null = null;
+    const stop = () => {
+      if (timer) clearInterval(timer);
+      timer = null;
+      dir = null;
+    };
+    const onDown = (e: KeyboardEvent) => {
+      const d = DIRS[e.key.toLowerCase()];
+      if (!d) return;
+      e.preventDefault(); // don't scroll the page
+      if (e.repeat) return; // we drive our own steady repeat
+      dir = d;
+      moveRef.current(d[0], d[1]);
+      if (timer) clearInterval(timer);
+      timer = setInterval(() => dir && moveRef.current(dir[0], dir[1]), 160);
+    };
+    const onUp = (e: KeyboardEvent) => {
+      const d = DIRS[e.key.toLowerCase()];
+      if (d && dir && d[0] === dir[0] && d[1] === dir[1]) stop();
+    };
+    window.addEventListener("keydown", onDown);
+    window.addEventListener("keyup", onUp);
+    return () => {
+      stop();
+      window.removeEventListener("keydown", onDown);
+      window.removeEventListener("keyup", onUp);
+    };
+  }, []);
+}
+
+/* ------------------------------------------------------------------ */
 /* Maze — walk the honest path; lies dead-end                          */
 /* ------------------------------------------------------------------ */
 
@@ -2048,6 +3500,9 @@ function MazePuzzle({ puzzle, solved, onSolved }: PuzzleProps<Extract<EscapeRoom
     if (grid[nr][nc] === "#") return;
     setPos([nr, nc]);
   }
+
+  // Arrow keys / WASD walk the hero (shared with the trail maze).
+  useMazeKeys(move);
 
   const sign = variant.signs?.find((s) => s.at[0] === pos[0] && s.at[1] === pos[1]);
   const dpad =
@@ -2119,11 +3574,244 @@ function MazePuzzle({ puzzle, solved, onSolved }: PuzzleProps<Extract<EscapeRoom
           </div>
         </div>
       </div>
+      <p className="mt-2 font-round text-[11px] text-slate-400">
+        Move with the arrows on screen, the ← ↑ ↓ → keys, or WASD.
+      </p>
       <p className="mt-3 font-round text-xs text-slate-400">
         {atGoal
           ? puzzle.wonText ?? "💙 You reached the core the honest way!"
           : puzzle.caption ?? "Use the arrows to walk to 💙 — lies lead to dead ends."}
       </p>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Trail maze — read the map, then walk the landmarks in order          */
+/* ------------------------------------------------------------------ */
+
+function TrailMazePuzzle({
+  puzzle,
+  solved,
+  orderUnlocked,
+  onSolved,
+  onWrong,
+}: PuzzleProps<Extract<EscapeRoomPuzzle, { kind: "trailmaze" }>> & { orderUnlocked?: boolean }) {
+  const grid = puzzle.grid;
+  // The route is only known once the prerequisite "map" station is solved.
+  const unlocked = orderUnlocked !== false;
+  const ends = useMemo(() => {
+    let s: [number, number] = [1, 1];
+    let g: [number, number] = [1, 1];
+    grid.forEach((row, r) =>
+      row.split("").forEach((ch, c) => {
+        if (ch === "S") s = [r, c];
+        if (ch === "G") g = [r, c];
+      }),
+    );
+    return { s, g };
+  }, [grid]);
+
+  // The squares around a cell (3×3) — what the hero can see from there.
+  const reveal = (p: [number, number]) => {
+    const out: string[] = [];
+    for (let dr = -1; dr <= 1; dr++)
+      for (let dc = -1; dc <= 1; dc++) {
+        const r = p[0] + dr;
+        const c = p[1] + dc;
+        if (r >= 0 && c >= 0 && r < grid.length && c < grid[0].length) out.push(`${r},${c}`);
+      }
+    return out;
+  };
+
+  const [pos, setPos] = useState(ends.s);
+  const [seen, setSeen] = useState<Set<string>>(() => new Set(reveal(ends.s)));
+  // How many route waypoints have been collected, in order (an index into `route`).
+  const [step, setStep] = useState(0);
+  const [nudge, setNudge] = useState<string | null>(null);
+
+  const landmarkAt = (r: number, c: number) =>
+    puzzle.landmarks.find((l) => l.at[0] === r && l.at[1] === c);
+  const goalEmoji = puzzle.goalEmoji ?? "🚪";
+  const allCollected = step >= puzzle.route.length;
+  const atGoal = pos[0] === ends.g[0] && pos[1] === ends.g[1];
+  const won = allCollected && atGoal;
+
+  useEffect(() => {
+    if (won && !solved) onSolved();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [won, solved]);
+
+  // Fog of war: light up the squares around the hero as they explore the trail.
+  useEffect(() => {
+    setSeen((prev) => {
+      const next = new Set(prev);
+      reveal(pos).forEach((k) => next.add(k));
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pos]);
+
+  function move(dr: number, dc: number) {
+    if (solved) return;
+    const nr = pos[0] + dr;
+    const nc = pos[1] + dc;
+    if (nr < 0 || nc < 0 || nr >= grid.length || nc >= grid[0].length) return;
+    if (grid[nr][nc] === "#") return;
+    setPos([nr, nc]);
+
+    // You can scout the maze freely, but the trail doesn't COUNT until the map is
+    // read — so you can't luck into the right order (and the gate) before then.
+    if (!unlocked) return;
+
+    // Stepping onto a landmark: count it if it's the next one on the map's route.
+    // A landmark already behind us (idx < step) is just scenery to walk back over;
+    // a still-to-come one stepped on early gets a gentle out-of-order nudge.
+    const lm = landmarkAt(nr, nc);
+    if (lm && !allCollected) {
+      const idx = puzzle.route.indexOf(lm.emoji);
+      if (idx === step) {
+        setStep((s) => s + 1);
+        setNudge(null);
+      } else if (idx > step) {
+        setNudge(`Check the map — ${puzzle.route[step]} comes next!`);
+        onWrong();
+      }
+    }
+  }
+
+  // Arrow keys / WASD walk the hero (shared with the honesty maze).
+  useMazeKeys(move);
+
+  const dpad =
+    "flex h-11 w-11 items-center justify-center rounded-xl bg-amber-50 text-xl ring-2 ring-amber-100 transition hover:bg-amber-100 disabled:opacity-40";
+
+  return (
+    <div className="mt-4 text-center">
+      {puzzle.emoji && <div className="text-5xl">{puzzle.emoji}</div>}
+      <p className="mt-3 font-fun text-lg font-700 text-slate-800">{puzzle.prompt}</p>
+
+      {/* The map: the route's landmarks with connector arrows; locked until the
+          prerequisite map station is solved (then each ticks green in order). */}
+      <div className="mx-auto mt-4 flex max-w-md flex-wrap items-center justify-center gap-1.5 rounded-2xl bg-emerald-50 px-4 py-3 ring-1 ring-emerald-200">
+        <span className="mr-1 font-fun text-sm font-700 text-emerald-700">🗺️ Map:</span>
+        {puzzle.route.map((emoji, i) => {
+          const done = i < step;
+          const next = i === step && !allCollected;
+          return (
+            <span key={i} className="flex items-center gap-1.5">
+              <span
+                className={`flex h-9 w-9 items-center justify-center rounded-xl text-xl transition ${
+                  !unlocked
+                    ? "bg-slate-100 text-slate-400 ring-1 ring-slate-200"
+                    : done
+                      ? "bg-emerald-500/20 ring-2 ring-emerald-500"
+                      : next
+                        ? "bg-white ring-2 ring-amber-300"
+                        : "bg-white/60 ring-1 ring-slate-200 grayscale"
+                }`}
+              >
+                {unlocked ? emoji : "❓"}
+              </span>
+              {unlocked && done && <span className="text-emerald-600">✓</span>}
+              {i < puzzle.route.length - 1 && <span className="text-slate-300">→</span>}
+            </span>
+          );
+        })}
+        <span className="text-slate-300">→</span>
+        <span
+          className={`flex h-9 w-9 items-center justify-center rounded-xl text-xl ${
+            unlocked && allCollected ? "bg-white ring-2 ring-amber-300" : "bg-white/60 ring-1 ring-slate-200 grayscale"
+          }`}
+        >
+          {goalEmoji}
+        </span>
+      </div>
+
+      <>
+          {/* The maze is always explorable, but landmarks only count once the map
+              is read — scouting while locked can't luck you into the exit. */}
+          <div className="mt-4 flex flex-col items-center justify-center gap-4 sm:flex-row sm:items-center sm:gap-6">
+            <div
+              className="inline-grid gap-0.5 rounded-xl bg-emerald-950 p-2"
+              style={{ gridTemplateColumns: `repeat(${grid[0].length}, minmax(0, 1fr))` }}
+            >
+              {grid.map((row, r) =>
+                row.split("").map((ch, c) => {
+                  const key = `${r},${c}`;
+                  const visible = seen.has(key);
+                  const isWall = ch === "#";
+                  const here = pos[0] === r && pos[1] === c;
+                  const isGoal = ch === "G";
+                  const lm = landmarkAt(r, c);
+                  // A landmark is "done" once the route has advanced past it.
+                  const lmDone = lm != null && puzzle.route.indexOf(lm.emoji) < step;
+                  return (
+                    <div
+                      key={key}
+                      className={`flex h-6 w-6 items-center justify-center rounded-sm text-sm ${
+                        !visible ? "bg-emerald-950" : isWall ? "bg-emerald-800" : "bg-lime-50"
+                      } ${visible && lmDone ? "ring-1 ring-emerald-400" : ""}`}
+                    >
+                      {!visible
+                        ? ""
+                        : here
+                          ? "🚶"
+                          : isGoal
+                            ? goalEmoji
+                            : lm
+                              ? <span className={lmDone ? "opacity-40" : ""}>{lm.emoji}</span>
+                              : ""}
+                    </div>
+                  );
+                }),
+              )}
+            </div>
+
+            {/* Controls column: nudge slot above a fixed move pad. */}
+            <div className="flex flex-col items-center">
+              <div className="flex min-h-[5.5rem] w-44 items-center justify-center">
+                {nudge && !won && (
+                  <div className="rounded-2xl bg-coral/10 p-3 font-round text-sm text-coral ring-1 ring-coral/20">
+                    {nudge}
+                  </div>
+                )}
+              </div>
+
+              <div className="mt-1 inline-grid grid-cols-3 gap-1">
+                <span />
+                <button onClick={() => move(-1, 0)} disabled={solved} aria-label="Up" className={dpad}>
+                  ⬆️
+                </button>
+                <span />
+                <button onClick={() => move(0, -1)} disabled={solved} aria-label="Left" className={dpad}>
+                  ⬅️
+                </button>
+                <span className="flex items-center justify-center font-fun text-[10px] font-700 text-slate-400">walk</span>
+                <button onClick={() => move(0, 1)} disabled={solved} aria-label="Right" className={dpad}>
+                  ➡️
+                </button>
+                <span />
+                <button onClick={() => move(1, 0)} disabled={solved} aria-label="Down" className={dpad}>
+                  ⬇️
+                </button>
+                <span />
+              </div>
+            </div>
+          </div>
+          <p className="mt-2 font-round text-[11px] text-slate-400">
+            Move with the arrows on screen, the ← ↑ ↓ → keys, or WASD.
+          </p>
+          <p className="mt-3 font-round text-xs text-slate-400">
+            {!unlocked
+              ? "🔒 Scout the trail if you like — but read the Trail Map to learn the order before you can finish."
+              : won
+                ? puzzle.wonText ?? "🗺️ You followed the map and walked the whole trail!"
+                : allCollected
+                  ? `All landmarks found — now reach the ${goalEmoji}!`
+                  : puzzle.caption ?? "Read the map, then walk the landmarks in order."}
+          </p>
+        </>
     </div>
   );
 }
@@ -2212,6 +3900,12 @@ function WordSearchPuzzle({
     [puzzle.layout, puzzle.words, puzzle.size],
   );
   const targets = useMemo(() => puzzle.words.map((w) => w.toUpperCase().replace(/[^A-Z]/g, "")), [puzzle.words]);
+  // "Secret" words show as ❓ in the list (the player works them out from a clue
+  // elsewhere) but stay searchable and don't keep the grid scrambled.
+  const secretSet = useMemo(
+    () => new Set((puzzle.secret ?? []).map((w) => w.toUpperCase().replace(/[^A-Z]/g, ""))),
+    [puzzle.secret],
+  );
   const hidden = hiddenWords ?? new Set<string>();
   const anyHidden = targets.some((t) => hidden.has(t));
   const withAxes = !!showCoords && !!puzzle.intersection;
@@ -2280,15 +3974,17 @@ function WordSearchPuzzle({
         {targets.map((t) => {
           const got = found.includes(t);
           const isHidden = hidden.has(t);
+          // Mask provider-gated words (until lit) AND secret words (always) as "?".
+          const masked = isHidden || (secretSet.has(t) && !got);
           const emoji = wordHints?.get(t);
-          // Hidden → "?", revealed-with-a-picture → show only the emoji (never
+          // Masked → "?", revealed-with-a-picture → show only the emoji (never
           // the spelled-out word), otherwise (plain rooms) → show the word.
-          const label = isHidden ? "❓ ? ?" : got ? "✅" : emoji ?? t;
+          const label = masked ? "❓ ? ?" : got ? "✅" : emoji ?? t;
           return (
             <span
               key={t}
               className={`rounded-full px-3 py-1 font-fun text-base font-700 ring-1 ${
-                isHidden
+                masked
                   ? "bg-slate-100 text-slate-400 ring-slate-200"
                   : got
                     ? "bg-mint/30 text-emerald-700 ring-emerald-300"
@@ -2366,7 +4062,7 @@ function WordSearchPuzzle({
         {obscured
           ? `🔒 The display is scrambled — solve the machines to light it up (${revealedCount}/${targets.length} clues lit).`
           : withAxes && allFound
-            ? "⭐ The three words cross here! Read its Column ➡️ and Row ⬇️ — that's the door code."
+            ? "⭐ The three words cross here! Column is 4 and Row is 5."
             : "Tap the first letter, then the last letter of a word."}
       </p>
     </div>
@@ -2481,13 +4177,76 @@ function PuzzleReview({
     );
   }
 
-  if (puzzle.kind === "maze" || puzzle.kind === "fair") {
+  if (puzzle.kind === "maze" || puzzle.kind === "trailmaze" || puzzle.kind === "fair") {
     return (
       <div className="mt-3 text-center">
         {puzzle.emoji && <div className="text-4xl">{puzzle.emoji}</div>}
         <p className="mt-2 font-fun font-700 text-slate-800">{puzzle.prompt}</p>
         <div className="mt-3 rounded-2xl bg-mint/20 px-4 py-3 font-fun font-700 text-emerald-700 ring-1 ring-emerald-300">
           ✅ Core charged!
+        </div>
+      </div>
+    );
+  }
+
+  if (puzzle.kind === "unscramble") {
+    return (
+      <div className="mt-3 text-center">
+        {puzzle.emoji && <div className="text-4xl">{puzzle.emoji}</div>}
+        <p className="mt-2 font-fun font-700 text-slate-800">{puzzle.prompt}</p>
+        <div className="mt-3 flex flex-wrap justify-center gap-2">
+          {puzzle.words.map((w) => (
+            <span key={w} className="rounded-2xl bg-mint/20 px-4 py-1.5 font-fun text-lg font-700 tracking-widest text-emerald-700 ring-1 ring-emerald-300">
+              {w.toUpperCase()}
+            </span>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  if (puzzle.kind === "crossword") {
+    const gridCols = Math.max(...puzzle.rows.map((r) => r.offset + r.word.length));
+    return (
+      <div className="mt-3 text-center">
+        <p className="font-fun font-700 text-slate-800">Crossword solved! 🎉</p>
+        <div className="mt-3 flex justify-center overflow-x-auto">
+          <div className="grid gap-1" style={{ gridTemplateColumns: `repeat(${gridCols}, minmax(0, 1fr))` }}>
+            {puzzle.rows.map((row, r) => (
+              <Fragment key={r}>
+                {Array.from({ length: gridCols }).map((_, c) => {
+                  const within = c >= row.offset && c < row.offset + row.word.length;
+                  if (!within) return <span key={c} className="h-7 w-7 sm:h-8 sm:w-8" />;
+                  const isSecret = c === puzzle.secretCol;
+                  return (
+                    <span
+                      key={c}
+                      className={`flex h-7 w-7 items-center justify-center rounded font-mono text-[11px] font-700 sm:h-8 sm:w-8 ${
+                        isSecret ? "bg-sunny/80 text-slate-900 ring-2 ring-amber-500" : "bg-mint/20 text-emerald-700"
+                      }`}
+                    >
+                      {row.word[c - row.offset]}
+                    </span>
+                  );
+                })}
+              </Fragment>
+            ))}
+          </div>
+        </div>
+        <p className="mt-2 font-round text-xs text-slate-500">
+          ⭐ The gold column spells <span className="font-700 text-amber-600">{puzzle.secret.toUpperCase()}</span>.
+        </p>
+      </div>
+    );
+  }
+
+  if (puzzle.kind === "symbol-lock") {
+    return (
+      <div className="mt-3 text-center">
+        {puzzle.emoji && <div className="text-4xl">{puzzle.emoji}</div>}
+        <p className="mt-2 font-fun font-700 text-slate-800">{puzzle.prompt}</p>
+        <div className="mt-3 rounded-2xl bg-mint/20 px-4 py-3 font-fun text-lg font-700 tracking-[0.3em] text-emerald-700 ring-1 ring-emerald-300">
+          🔓 {puzzle.word.toUpperCase()}
         </div>
       </div>
     );
@@ -2554,7 +4313,7 @@ function PuzzleReview({
             </div>
           </div>
           <p className="mt-2 font-round text-xs text-slate-500">
-            ⭐ The crossing — read its Column ➡️ and Row ⬇️ for the door.
+            ⭐ Read its Column and Row for the door.
           </p>
         </>
       )}
@@ -2577,7 +4336,7 @@ function ExitKeypad({
   onClose,
   onEscape,
 }: {
-  slots: { label: string; emoji: string; value: string }[];
+  slots: { value: string }[];
   code: string;
   outro: string;
   onClose: () => void;
@@ -2629,14 +4388,10 @@ function ExitKeypad({
         ) : (
           <form onSubmit={submit}>
             <p className="mx-auto mt-1 max-w-xs font-round text-sm text-slate-500">
-              Where the three words crossed on the display — type that square&apos;s Column and Row.
+              Where the three words crossed on the display. ⭐
             </p>
             <div className="mt-5 flex justify-center gap-3">
               {slots.map((s, i) => (
-                <div key={s.label} className="flex flex-col items-center gap-1">
-                  <span className="font-fun text-xs font-700 text-slate-500">
-                    {s.emoji} {s.label}
-                  </span>
                   <input
                     ref={(el) => {
                       refs.current[i] = el;
@@ -2644,17 +4399,15 @@ function ExitKeypad({
                     value={digits[i]}
                     onChange={(e) => setDigit(i, e.target.value)}
                     inputMode="numeric"
-                    aria-label={s.label}
                     className={`h-16 w-14 rounded-2xl border-2 text-center font-mono text-3xl font-700 text-slate-800 outline-none transition ${
                       shake ? "animate-pulse border-coral" : "border-amber-200 focus:border-coral"
                     }`}
                   />
-                </div>
               ))}
             </div>
             {shake && (
               <p className="mt-3 font-fun text-sm font-600 text-coral">
-                That code didn&apos;t work — pop back to the display and check the crossing! 🔁
+                That code didn&apos;t work — go back to the display and check the crossing! 🔁
               </p>
             )}
             <div className="mt-6 flex justify-center gap-3">

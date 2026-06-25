@@ -9,6 +9,10 @@ import { math } from "./math";
 import { beatdie } from "./beatdie";
 import { showdown } from "./showdown";
 import { matchcolours } from "./matchcolours";
+import { maketen } from "./maketen";
+import { wheel } from "./wheel";
+import { oddone } from "./oddone";
+import { sequence } from "./sequence";
 
 // The engines are typed over different state shapes; the session layer treats
 // state as opaque jsonb, so an `unknown`-stated view is the honest contract.
@@ -19,6 +23,10 @@ export const ENGINES: Record<string, GameEngine<unknown>> = {
   "beat-the-die": beatdie as unknown as GameEngine<unknown>,
   "card-showdown": showdown as unknown as GameEngine<unknown>,
   "matching-colours": matchcolours as unknown as GameEngine<unknown>,
+  "make-ten": maketen as unknown as GameEngine<unknown>,
+  "animal-count": wheel as unknown as GameEngine<unknown>,
+  "odd-one-out": oddone as unknown as GameEngine<unknown>,
+  "alphabet-lock": sequence as unknown as GameEngine<unknown>,
 };
 
 export function getEngine(slug: string): GameEngine<unknown> | undefined {
