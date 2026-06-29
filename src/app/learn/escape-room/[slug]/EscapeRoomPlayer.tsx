@@ -967,18 +967,6 @@ function RoomMap({
     solvedIds.includes(openStation.puzzle.unlockedBy);
   const noteData = layout.notes?.find((n) => n.id === openNote) ?? null;
   const labelOf = (id: string | null) => carryItems.find((i) => i.id === id)?.label ?? "item";
-  const itemIcon = (id: string | null) => {
-    const it = carryItems.find((i) => i.id === id);
-    if (!it) return "core";
-    // Charge-mode cores are identical generic orbs until charged; a charged core
-    // takes on its charger's symbol so you can finally tell them apart.
-    if (carry?.mode === "charge") {
-      const isCharged = charged.includes(it.id) || (carrying === it.id && carriedReady);
-      return isCharged && it.station ? STATION_ICON[`${room.slug}:${it.station}`] ?? "core" : "core";
-    }
-    if (it.icon) return it.icon;
-    return it.station ? STATION_ICON[`${room.slug}:${it.station}`] ?? "core" : "bottle";
-  };
 
   // Charge-mode cores carry a matching number (the only distinguisher while
   // loose); each charger room shows the number of the core it wants.
@@ -1428,41 +1416,45 @@ function RoomMap({
           if (!r) return null;
           const x = r.x + r.w / 2;
           const y = r.y + r.h * 0.3;
+          const ringed = near?.key === `n-${n.id}`;
           return (
-            <ObjMarker
+            <button
               key={n.id}
-              x={pct(x, W)}
-              y={pct(y, H)}
-              icon="note"
-              ringed={near?.key === `n-${n.id}`}
               onClick={() => setOpenNote(n.id)}
-            />
+              className={`absolute z-20 h-8 w-8 -translate-x-1/2 -translate-y-1/2 transition sm:h-9 sm:w-9 ${ringed ? "scale-110" : ""}`}
+              style={{
+                left: pct(x, W),
+                top: pct(y, H),
+                filter: ringed
+                  ? "drop-shadow(0 0 5px rgba(248,113,113,0.95)) drop-shadow(0 2px 2px rgba(0,0,0,0.3))"
+                  : "drop-shadow(0 2px 2px rgba(0,0,0,0.3))",
+              }}
+              title="Read the note"
+            >
+              <Prop art="note" className="h-full w-full" />
+            </button>
           );
         })}
 
         {/* Sink + recycler stations (recycle mode) */}
         {sinkPt && (
           <div
-            className="absolute z-20 flex flex-col items-center gap-0.5 -translate-x-1/2 -translate-y-1/2"
+            className="absolute z-20 flex flex-col items-center -translate-x-1/2 -translate-y-1/2"
             style={{ left: pct(sinkPt.x, W), top: pct(sinkPt.y, H) }}
             title="Wash sink"
           >
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-sky-500 text-white shadow-md ring-2 ring-white/70 sm:h-11 sm:w-11">
-              <StationIcon name="wash" className="h-5 w-5 sm:h-6 sm:w-6" />
-            </span>
-            <span className="rounded-full bg-slate-900/60 px-1.5 font-fun text-[8px] font-700 text-white sm:text-[10px]">Wash</span>
+            <Prop art="sink" className="h-10 w-10 sm:h-12 sm:w-12" style={{ filter: "drop-shadow(0 2px 2px rgba(0,0,0,0.35))" }} />
+            <span className="-mt-1 rounded-full bg-slate-900/60 px-1.5 font-fun text-[8px] font-700 text-white sm:text-[10px]">Wash</span>
           </div>
         )}
         {depositPt && (
           <div
-            className="absolute z-20 flex flex-col items-center gap-0.5 -translate-x-1/2 -translate-y-1/2"
+            className="absolute z-20 flex flex-col items-center -translate-x-1/2 -translate-y-1/2"
             style={{ left: pct(depositPt.x, W), top: pct(depositPt.y, H) }}
             title="Recycler"
           >
-            <span className="flex h-9 w-9 items-center justify-center rounded-2xl bg-emerald-600 text-white shadow-md ring-2 ring-white/70 sm:h-11 sm:w-11">
-              <StationIcon name="recycle" className="h-5 w-5 sm:h-6 sm:w-6" />
-            </span>
-            <span className="rounded-full bg-slate-900/60 px-1.5 font-fun text-[8px] font-700 text-white sm:text-[10px]">Recycle</span>
+            <Prop art="recycler" className="h-10 w-10 sm:h-12 sm:w-12" style={{ filter: "drop-shadow(0 2px 2px rgba(0,0,0,0.35))" }} />
+            <span className="-mt-1 rounded-full bg-slate-900/60 px-1.5 font-fun text-[8px] font-700 text-white sm:text-[10px]">Recycle</span>
           </div>
         )}
 
@@ -1472,27 +1464,52 @@ function RoomMap({
           if (carrying === it.id) return null;
           const p = itemPos(it, i);
           const done = delivered.includes(it.id);
-          const ready = charged.includes(it.id) || washed.includes(it.id);
+          const isCore = carry?.mode === "charge";
+          const isBottle = carry?.mode === "recycle";
+          const chargedCore = isCore && charged.includes(it.id);
+          const dirtyBottle = isBottle && !washed.includes(it.id) && !done;
           const pickable = isPickable(it);
+          const num = coreNumber(it.id);
+          const ringed = near?.key === `i-${it.id}`;
+          const propType = isBottle ? "bottle" : ITEM_PROP[it.icon ?? ""] ?? "scroll";
           return (
             <button
               key={it.id}
               onClick={() => pickable && pickUp(it.id)}
               disabled={!pickable}
-              className={`absolute z-20 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full shadow transition sm:h-10 sm:w-10 ${
-                done
-                  ? "bg-emerald-200/80 text-emerald-700 ring-1 ring-emerald-300"
-                  : pickable
-                    ? `bg-white text-coral ${near?.key === `i-${it.id}` ? "ring-2 ring-coral scale-110 animate-pulse" : "ring-1 ring-white/60"}`
-                    : "cursor-default bg-slate-700/60 text-white/50 opacity-50"
-              } ${ready && !done ? "ring-2 ring-amber-300" : ""}`}
-              style={{ left: pct(p.x, W), top: pct(p.y, H) }}
-              title={coreNumber(it.id) ? `Core ${coreNumber(it.id)}` : pickable ? it.label : done ? `${it.label} (done)` : it.label}
+              className={`absolute z-20 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center transition sm:h-10 sm:w-10 ${ringed ? "scale-110" : ""} ${pickable ? "" : "cursor-default"}`}
+              style={{
+                left: pct(p.x, W),
+                top: pct(p.y, H),
+                opacity: pickable || done ? 1 : 0.5,
+                filter: `${dirtyBottle ? "grayscale(1) brightness(0.82) " : ""}${
+                  ringed
+                    ? "drop-shadow(0 0 5px rgba(248,113,113,0.95)) drop-shadow(0 2px 2px rgba(0,0,0,0.3))"
+                    : "drop-shadow(0 2px 2px rgba(0,0,0,0.3))"
+                }`,
+              }}
+              title={num ? `Core ${num}` : dirtyBottle ? `${it.label} (needs washing)` : done ? `${it.label} (done)` : it.label}
             >
-              <StationIcon name={itemIcon(it.id)} className="h-5 w-5 sm:h-6 sm:w-6" />
-              {coreNumber(it.id) && !done && (
+              {isCore ? (
+                <span
+                  className="flex h-full w-full items-center justify-center rounded-full ring-2 ring-white/70"
+                  style={{ background: chargedCore ? "radial-gradient(circle at 35% 30%, #fde68a, #f59e0b 55%, #b45309)" : "radial-gradient(circle at 35% 30%, #bae6fd, #38bdf8 55%, #075985)" }}
+                >
+                  {chargedCore && it.station && <StationIcon name={STATION_ICON[`${room.slug}:${it.station}`] ?? "core"} className="h-4 w-4 text-white sm:h-5 sm:w-5" />}
+                </span>
+              ) : (
+                <Prop art={propType} className="h-full w-full" />
+              )}
+              {num != null && !done && (
                 <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-slate-900 font-fun text-[9px] font-700 text-white ring-1 ring-white/70 sm:h-5 sm:w-5 sm:text-[10px]">
-                  {coreNumber(it.id)}
+                  {num}
+                </span>
+              )}
+              {done && (
+                <span className="absolute -right-1 -top-1 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-1 ring-white">
+                  <svg viewBox="0 0 24 24" className="h-2.5 w-2.5" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 12.5l4 4L19 6.5" />
+                  </svg>
                 </span>
               )}
             </button>
@@ -1507,24 +1524,26 @@ function RoomMap({
           const c = centerOf(geo.floors[cell.id]);
           const solved = solvedIds.includes(cell.stationId);
           const gated = cellLocked(cell);
+          const ringed = near?.key === `m-${cell.id}`;
+          const tone = gated ? "gated" : solved ? "solved" : "idle";
+          const device = STATION_DEVICE[`${room.slug}:${cell.stationId}`];
           return (
             <button
               key={cell.id}
               onClick={() => (gated ? setFlash(lockMessage(cell)) : setOpenId(cell.stationId!))}
-              className={`absolute z-20 flex h-11 w-11 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-2xl shadow-md transition sm:h-14 sm:w-14 ${
-                gated
-                  ? "bg-slate-800 text-amber-400/80 ring-1 ring-slate-600"
-                  : solved
-                    ? "bg-mint/30 text-emerald-600 ring-1 ring-mint/50"
-                    : "bg-white text-slate-700 ring-1 ring-white/70"
-              } ${near?.key === `m-${cell.id}` ? "scale-110 ring-2 ring-coral" : ""}`}
-              style={{ left: pct(c.x, W), top: pct(c.y, H) }}
-              title={gated ? "Locked — recycle the bottles first" : station.label}
+              className={`absolute z-20 h-12 w-12 -translate-x-1/2 -translate-y-1/2 transition sm:h-14 sm:w-14 ${
+                ringed ? "-translate-y-1 scale-110" : ""
+              }`}
+              style={{
+                left: pct(c.x, W),
+                top: pct(c.y, H),
+                filter: ringed
+                  ? "drop-shadow(0 0 5px rgba(248,113,113,0.95)) drop-shadow(0 3px 3px rgba(0,0,0,0.35))"
+                  : "drop-shadow(0 3px 3px rgba(0,0,0,0.35))",
+              }}
+              title={gated ? "Locked — finish the room first" : solved ? `${station.label} (done)` : station.label}
             >
-              <StationIcon
-                name={gated ? "lock" : solved ? "check" : STATION_ICON[`${room.slug}:${cell.stationId}`] ?? "panel"}
-                className="h-6 w-6 sm:h-8 sm:w-8"
-              />
+              {device ? <ThemedDevice device={device} tone={tone} /> : <MachineDevice kind={station.puzzle.kind} tone={tone} />}
             </button>
           );
         })}
@@ -1537,13 +1556,16 @@ function RoomMap({
           return (
             <button
               onClick={() => exitReady && performAction(near?.kind === "exit" ? near : { key: "exit", kind: "exit", id: layout.exit, label: "", x: c.x, y: c.y, enabled: true })}
-              className={`absolute z-20 flex h-12 w-9 -translate-x-1/2 items-center justify-center rounded-md shadow-md transition sm:h-14 sm:w-11 ${
-                exitReady ? "bg-amber-300 text-slate-800 ring-2 ring-amber-500 animate-pulse" : "bg-slate-800 text-amber-400/80 ring-1 ring-slate-600"
-              }`}
-              style={{ left: pct(c.x, W), top: pct(er.y + er.h - 4, H), transform: "translate(-50%, -100%)" }}
+              className={`absolute z-20 h-12 w-10 -translate-x-1/2 transition sm:h-16 sm:w-12 ${exitReady ? "animate-pulse" : ""}`}
+              style={{
+                left: pct(c.x, W),
+                top: pct(er.y + er.h - 4, H),
+                transform: "translate(-50%, -100%)",
+                filter: exitReady ? "drop-shadow(0 0 6px rgba(251,191,36,0.9))" : "drop-shadow(0 2px 2px rgba(0,0,0,0.35))",
+              }}
               title={exitReady ? "Open the door" : "Locked — finish the room first"}
             >
-              <StationIcon name={exitReady ? "door" : "lock"} className="h-6 w-6 sm:h-7 sm:w-7" />
+              <Prop art={exitReady ? "doorOpen" : "doorLocked"} className="h-full w-full" />
             </button>
           );
         })()}
@@ -1571,8 +1593,21 @@ function RoomMap({
           style={{ left: pct(spawnCenter.x, W), top: pct(spawnCenter.y, H) }}
         >
           {heldItem && (
-            <div className="relative mx-auto mb-0.5 flex h-5 w-5 items-center justify-center rounded-full bg-white text-coral shadow sm:h-6 sm:w-6">
-              <StationIcon name={itemIcon(heldItem.id)} className="h-3.5 w-3.5 sm:h-4 sm:w-4" />
+            <div className="relative mx-auto mb-0.5 h-5 w-5 drop-shadow sm:h-6 sm:w-6">
+              {carry?.mode === "charge" ? (
+                <span
+                  className="flex h-full w-full items-center justify-center rounded-full ring-2 ring-white/70"
+                  style={{ background: carriedReady ? "radial-gradient(circle at 35% 30%, #fde68a, #f59e0b 55%, #b45309)" : "radial-gradient(circle at 35% 30%, #bae6fd, #38bdf8 55%, #075985)" }}
+                >
+                  {carriedReady && heldItem.station && <StationIcon name={STATION_ICON[`${room.slug}:${heldItem.station}`] ?? "core"} className="h-3 w-3 text-white sm:h-3.5 sm:w-3.5" />}
+                </span>
+              ) : (
+                <Prop
+                  art={carry?.mode === "recycle" ? "bottle" : ITEM_PROP[heldItem.icon ?? ""] ?? "scroll"}
+                  className="h-full w-full"
+                  style={carry?.mode === "recycle" && !carriedReady ? { filter: "grayscale(1) brightness(0.82)" } : undefined}
+                />
+              )}
               {coreNumber(heldItem.id) && (
                 <span className="absolute -right-1.5 -top-1.5 flex h-3.5 w-3.5 items-center justify-center rounded-full bg-slate-900 font-fun text-[8px] font-700 text-white ring-1 ring-white/70 sm:h-4 sm:w-4 sm:text-[9px]">
                   {coreNumber(heldItem.id)}
@@ -1723,33 +1758,6 @@ function RoomMap({
         />
       )}
     </>
-  );
-}
-
-/** A clickable round world object (clue note). */
-function ObjMarker({
-  x,
-  y,
-  icon,
-  ringed,
-  onClick,
-}: {
-  x: string;
-  y: string;
-  icon: string;
-  ringed: boolean;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      onClick={onClick}
-      className={`absolute z-20 flex h-8 w-8 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-xl bg-amber-50 text-amber-700 shadow transition sm:h-9 sm:w-9 ${
-        ringed ? "scale-110 ring-2 ring-coral" : "ring-1 ring-amber-200"
-      }`}
-      style={{ left: x, top: y }}
-    >
-      <StationIcon name={icon} className="h-5 w-5 sm:h-6 sm:w-6" />
-    </button>
   );
 }
 
@@ -2162,6 +2170,596 @@ function SceneOrbs({ scene }: { scene: SceneKind }) {
  * built into the scene rather than floating on top of it. Coords match the
  * door's footprint (~x82–98, rising from the floor line at y≈75).
  */
+/**
+ * A standing "machine" object on the map, drawn bespoke per puzzle kind so each
+ * station reads as its own interactable gadget (keypad, decoder, bins, scale,
+ * crossword board, padlock…) rather than a generic icon chip. Body colour shifts
+ * to green when solved and slate when locked, with a check / padlock face.
+ */
+function MachineDevice({ kind, tone }: { kind: EscapeRoomPuzzle["kind"]; tone: "idle" | "solved" | "gated" }) {
+  const palette: Record<EscapeRoomPuzzle["kind"], [string, string]> = {
+    code: ["#3b82f6", "#1e40af"],
+    mcq: ["#a855f7", "#6b21a8"],
+    order: ["#14b8a6", "#0f766e"],
+    wordsearch: ["#22c55e", "#15803d"],
+    cipher: ["#6366f1", "#3730a3"],
+    circuit: ["#f97316", "#c2410c"],
+    sort: ["#06b6d4", "#0e7490"],
+    maze: ["#0ea5e9", "#0369a1"],
+    fair: ["#eab308", "#a16207"],
+    crossword: ["#f59e0b", "#b45309"],
+    "symbol-lock": ["#ef4444", "#991b1b"],
+    unscramble: ["#fb923c", "#9a3412"],
+    trailmaze: ["#10b981", "#047857"],
+  };
+  const [lite, dark] = tone === "gated" ? ["#64748b", "#334155"] : tone === "solved" ? ["#34d399", "#047857"] : palette[kind];
+  const SCR = "#0b1326";
+
+  const face = (() => {
+    if (tone === "gated")
+      return (
+        <g>
+          <path d="M19 25v-3a5 5 0 0 1 10 0v3" fill="none" stroke="#fde68a" strokeWidth="2.4" />
+          <rect x="15" y="25" width="18" height="13" rx="2.5" fill="#fde68a" />
+          <circle cx="24" cy="31" r="2.2" fill={dark} />
+        </g>
+      );
+    if (tone === "solved")
+      return <path d="M16 28l5 5 11-11" fill="none" stroke="#ecfdf5" strokeWidth="3.2" strokeLinecap="round" strokeLinejoin="round" />;
+    switch (kind) {
+      case "code":
+        return (
+          <>
+            <rect x="12" y="13" width="24" height="8" rx="1.5" fill={SCR} />
+            <line x1="15" y1="16" x2="31" y2="16" stroke="#7dd3fc" strokeWidth="1.3" />
+            <line x1="15" y1="18.6" x2="27" y2="18.6" stroke="#7dd3fc" strokeWidth="1.3" opacity="0.7" />
+            {[0, 1, 2].map((r) => [0, 1, 2].map((col) => <rect key={`${r}-${col}`} x={13.5 + col * 8} y={24.5 + r * 5.3} width="6" height="3.8" rx="1" fill="#fff" opacity="0.9" />))}
+          </>
+        );
+      case "mcq":
+        return (
+          <>
+            <rect x="12" y="13" width="24" height="9" rx="1.5" fill={SCR} />
+            <text x="24" y="20.5" fontSize="8" fontWeight="700" fill="#fff" textAnchor="middle">?</text>
+            {[0, 1, 2].map((i) => <rect key={i} x="13" y={25.5 + i * 4.8} width="22" height="3.2" rx="1.6" fill="#fff" opacity={0.9 - i * 0.2} />)}
+          </>
+        );
+      case "order":
+        return (
+          <>
+            {[0, 1, 2].map((i) => (
+              <g key={i}>
+                <circle cx="15" cy={17.5 + i * 8} r="2.7" fill="#fff" />
+                <text x="15" y={19.4 + i * 8} fontSize="4.4" fontWeight="700" fill={dark} textAnchor="middle">{i + 1}</text>
+                <rect x="20.5" y={15.8 + i * 8} width="15" height="3.4" rx="1.7" fill="#fff" opacity="0.85" />
+              </g>
+            ))}
+          </>
+        );
+      case "wordsearch":
+        return (
+          <>
+            {[0, 1, 2].map((r) => [0, 1, 2].map((col) => <rect key={`${r}-${col}`} x={11 + col * 6.4} y={13 + r * 6} width="5" height="5" rx="0.8" fill={SCR} opacity="0.5" />))}
+            <circle cx="30" cy="33" r="5.4" fill="none" stroke="#fff" strokeWidth="1.8" />
+            <line x1="34" y1="37" x2="38" y2="41" stroke="#fff" strokeWidth="2.2" strokeLinecap="round" />
+          </>
+        );
+      case "cipher":
+        return (
+          <>
+            {[0, 1, 2].map((i) => <rect key={i} x={12 + i * 9} y="14" width="6.5" height="6.5" rx="1" fill="#fff" opacity="0.9" />)}
+            <path d="M24 22.5v3.5M21 25l3 3 3-3" fill="none" stroke="#fff" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+            {["A", "B", "C"].map((ch, i) => <text key={i} x={15.2 + i * 9} y="38" fontSize="6" fontWeight="700" fill="#fff" textAnchor="middle">{ch}</text>)}
+          </>
+        );
+      case "circuit":
+        return (
+          <>
+            <circle cx="13" cy="32" r="2.6" fill="#fff" />
+            <path d="M15.6 32H23v-9h7" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="33" cy="23" r="4.2" fill="#fde047" stroke="#fff" strokeWidth="1.4" />
+            <path d="M31.4 23l1.3 1.3 2.1-2.5" fill="none" stroke={dark} strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+          </>
+        );
+      case "sort":
+        return (
+          <>
+            {[0, 1].map((i) => (
+              <g key={i}>
+                <rect x={11 + i * 13} y="20" width="11" height="2.6" rx="1" fill="#fff" />
+                <path d={`M${12 + i * 13} 23 h9 l-1.2 15 h-6.6 z`} fill="#fff" opacity="0.9" />
+              </g>
+            ))}
+          </>
+        );
+      case "maze":
+      case "trailmaze":
+        return (
+          <>
+            <rect x="11" y="13" width="26" height="24" rx="2" fill={SCR} />
+            <path d="M14 16h8v6h-6v6h12v-9h6" fill="none" stroke="#7dd3fc" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+            <circle cx="34.5" cy="19" r="1.9" fill="#34d399" />
+          </>
+        );
+      case "fair":
+        return (
+          <>
+            <line x1="24" y1="13" x2="24" y2="36" stroke="#fff" strokeWidth="1.7" />
+            <polygon points="20,38 28,38 24,33" fill="#fff" />
+            <line x1="13" y1="18" x2="35" y2="18" stroke="#fff" strokeWidth="1.7" strokeLinecap="round" />
+            <path d="M9.5 18a4 3 0 0 0 8 0" fill="none" stroke="#fff" strokeWidth="1.6" />
+            <path d="M30.5 18a4 3 0 0 0 8 0" fill="none" stroke="#fff" strokeWidth="1.6" />
+          </>
+        );
+      case "crossword":
+        return (
+          <>
+            {[0, 1, 2].map((r) => [0, 1, 2, 3].map((col) => <rect key={`${r}-${col}`} x={9 + col * 7.4} y={14 + r * 7} width="6.2" height="6.2" rx="0.8" fill={col === 1 ? "#fde047" : "#fff"} opacity={col === 1 ? 1 : 0.85} />))}
+          </>
+        );
+      case "symbol-lock":
+        return (
+          <>
+            <path d="M18 26v-4a6 6 0 0 1 12 0v4" fill="none" stroke="#fff" strokeWidth="2.3" />
+            <rect x="14" y="25" width="20" height="15" rx="2.5" fill="#fff" />
+            <polygon points="24,29 26.4,33 21.6,33" fill={dark} />
+          </>
+        );
+      case "unscramble":
+        return (
+          <>
+            <rect x="10" y="33" width="28" height="3" rx="1.5" fill="#fff" opacity="0.5" />
+            {["A", "C", "B"].map((ch, i) => (
+              <g key={i}>
+                <rect x={12 + i * 8.5} y="18" width="7.4" height="9.4" rx="1.4" fill="#fff" />
+                <text x={15.7 + i * 8.5} y="25" fontSize="6" fontWeight="700" fill={dark} textAnchor="middle">{ch}</text>
+              </g>
+            ))}
+          </>
+        );
+    }
+  })();
+
+  return (
+    <svg viewBox="0 0 48 52" className="h-full w-full">
+      <rect x="13" y="44" width="22" height="5" rx="2" fill={dark} />
+      <rect x="6" y="5" width="36" height="40" rx="6" fill={lite} stroke={dark} strokeWidth="1.6" />
+      <rect x="9" y="8" width="30" height="4.5" rx="2.2" fill="#fff" opacity="0.25" />
+      {face}
+    </svg>
+  );
+}
+
+/**
+ * Bespoke, free-standing themed objects for specific stations (a charger looks
+ * like a sci-fi charger, etc.), keyed by `${roomSlug}:${stationId}`. Stations
+ * not listed fall back to the puzzle-kind gadget above.
+ */
+const STATION_DEVICE: Record<string, string> = {
+  "robot-lab:panel": "console",
+  "robot-lab:robot": "robot",
+  "robot-lab:decoder": "decoder",
+  "robot-lab:poster": "screen",
+  "kindness-castle:kindness": "charger",
+  "kindness-castle:honesty": "charger",
+  "kindness-castle:fairness": "charger",
+  "green-lab:panel": "solar",
+  "green-lab:bins": "manual",
+  "green-lab:circuit": "fusebox",
+  "sg-history:merlion": "pedestal",
+  "sg-history:timeline": "vault",
+  "sg-history:river": "statue",
+  "sg-culture:food": "hawker",
+  "sg-culture:festival": "lamp",
+  "sg-culture:flower": "flower",
+  "sg-culture:fruit": "fruit",
+  "sg-culture:crossword": "crosswordboard",
+  "sg-culture:lockpad": "lockpanel",
+  "sg-nature:river": "river",
+  "sg-nature:seed": "tree",
+  "sg-nature:ranger": "signpost",
+  "sg-nature:trailmap": "trailmap",
+};
+
+/** SVG art (viewBox 0 0 48 48) for each themed device type. */
+const THEMED_ART: Record<string, React.ReactNode> = {
+  // Sci-fi charging pod: glowing core tube fills with energy, lightning emblem.
+  charger: (
+    <>
+      <ellipse cx="24" cy="43.5" rx="12" ry="2.4" fill="#4c1d95" opacity="0.45" />
+      <rect x="14.5" y="39" width="19" height="4" rx="1.5" fill="#5b21b6" />
+      <rect x="16" y="11" width="16" height="29" rx="6" fill="#7c3aed" stroke="#c4b5fd" strokeWidth="1.6" />
+      <rect x="20" y="16" width="8" height="20" rx="4" fill="#0e1230" />
+      <rect x="20.8" y="20" width="6.4" height="15.2" rx="3.2" fill="#22d3ee" />
+      <path d="M25.5 19l-4 6h2.8l-1.5 5 4.7-7h-2.8z" fill="#fde047" />
+      <rect x="12.5" y="20" width="2.4" height="11" rx="1.2" fill="#a78bfa" />
+      <rect x="33.1" y="20" width="2.4" height="11" rx="1.2" fill="#a78bfa" />
+      <circle cx="24" cy="8.5" r="2.6" fill="#67e8f9" />
+      <circle cx="24" cy="8.5" r="4.8" fill="none" stroke="#67e8f9" strokeWidth="1" opacity="0.45" />
+    </>
+  ),
+  // Robot-Lab control panel: keypad console (the reference image).
+  console: (
+    <>
+      <rect x="11" y="11" width="26" height="30" rx="4" fill="#2563eb" stroke="#1e40af" strokeWidth="1.6" />
+      <rect x="14" y="14" width="20" height="9" rx="1.6" fill="#0b1326" />
+      <line x1="16.5" y1="17.5" x2="31.5" y2="17.5" stroke="#7dd3fc" strokeWidth="1.2" />
+      <line x1="16.5" y1="20" x2="27" y2="20" stroke="#7dd3fc" strokeWidth="1.2" opacity="0.7" />
+      {[0, 1, 2].map((r) => [0, 1, 2].map((col) => <rect key={`${r}-${col}`} x={15.5 + col * 6.6} y={26 + r * 4.3} width="5" height="3" rx="0.8" fill="#bfdbfe" />))}
+    </>
+  ),
+  // Little robot helper.
+  robot: (
+    <>
+      <line x1="24" y1="14" x2="24" y2="9" stroke="#64748b" strokeWidth="1.6" />
+      <circle cx="24" cy="8" r="2" fill="#38bdf8" />
+      <rect x="9.5" y="20" width="3" height="9" rx="1.5" fill="#94a3b8" />
+      <rect x="35.5" y="20" width="3" height="9" rx="1.5" fill="#94a3b8" />
+      <rect x="13" y="14" width="22" height="20" rx="5" fill="#cbd5e1" stroke="#64748b" strokeWidth="1.6" />
+      <rect x="16" y="18" width="16" height="9" rx="2.5" fill="#0f172a" />
+      <circle cx="20.5" cy="22.5" r="2.1" fill="#38bdf8" />
+      <circle cx="27.5" cy="22.5" r="2.1" fill="#38bdf8" />
+      <rect x="19" y="29.5" width="10" height="2.2" rx="1.1" fill="#94a3b8" />
+      <rect x="17" y="34" width="5" height="6" rx="1.5" fill="#94a3b8" />
+      <rect x="26" y="34" width="5" height="6" rx="1.5" fill="#94a3b8" />
+    </>
+  ),
+  // Symbol decoder unit.
+  decoder: (
+    <>
+      <rect x="11" y="13" width="26" height="26" rx="3" fill="#6366f1" stroke="#3730a3" strokeWidth="1.6" />
+      <rect x="14" y="16" width="20" height="8" rx="1.5" fill="#0b1326" />
+      {[0, 1, 2].map((i) => <rect key={i} x={16.5 + i * 6.5} y="18" width="4.4" height="4.4" rx="0.8" fill="#a5b4fc" />)}
+      <path d="M24 24.5v3M21 26.5l3 2.5 3-2.5" stroke="#fff" strokeWidth="1.4" fill="none" strokeLinecap="round" strokeLinejoin="round" />
+      {["A", "B", "C"].map((ch, i) => <text key={i} x={17.5 + i * 6.5} y="37" fontSize="5.5" fontWeight="700" fill="#fff" textAnchor="middle">{ch}</text>)}
+    </>
+  ),
+  // Monitor screen (word display / trail map).
+  screen: (
+    <>
+      <rect x="20" y="34" width="8" height="5" fill="#475569" />
+      <rect x="15" y="38" width="18" height="3" rx="1.2" fill="#64748b" />
+      <rect x="8" y="10" width="32" height="24" rx="3" fill="#0f172a" stroke="#475569" strokeWidth="1.6" />
+      {[0, 1, 2, 3].map((r) => [0, 1, 2, 3].map((col) => <rect key={`${r}-${col}`} x={11 + col * 7} y={13 + r * 5} width="5.5" height="3.6" rx="0.6" fill="#4ade80" opacity={0.35 + ((r + col) % 3) * 0.22} />))}
+    </>
+  ),
+  // Tilted solar panel on a pole (no sun).
+  solar: (
+    <>
+      <line x1="24" y1="29" x2="24" y2="40" stroke="#64748b" strokeWidth="2.2" />
+      <rect x="20" y="40" width="8" height="2.6" rx="1" fill="#64748b" />
+      <g transform="rotate(-14 24 21)">
+        <rect x="10" y="14" width="28" height="15" rx="1.5" fill="#1e3a8a" stroke="#3b82f6" strokeWidth="1.3" />
+        {[1, 2, 3].map((col) => <line key={col} x1={10 + col * 7} y1="14" x2={10 + col * 7} y2="29" stroke="#60a5fa" strokeWidth="0.8" />)}
+        <line x1="10" y1="21.5" x2="38" y2="21.5" stroke="#60a5fa" strokeWidth="0.8" />
+      </g>
+    </>
+  ),
+  // Recycling unit: green bin with a recycle trefoil.
+  recycler: (
+    <>
+      <path d="M14 18h20l-2 22H16z" fill="#16a34a" stroke="#15803d" strokeWidth="1.4" />
+      <rect x="11.5" y="14.5" width="25" height="4" rx="1.5" fill="#15803d" />
+      <rect x="20" y="12" width="8" height="3" rx="1" fill="#22c55e" />
+      {[0, 1, 2].map((i) => <polygon key={i} points="24,24 27.5,30 20.5,30" fill="#dcfce7" transform={`rotate(${i * 120} 24 30)`} />)}
+    </>
+  ),
+  // Power circuit / fuse box wired to a bulb.
+  fusebox: (
+    <>
+      <rect x="12" y="12" width="24" height="28" rx="3" fill="#f97316" stroke="#c2410c" strokeWidth="1.6" />
+      <rect x="15" y="15" width="18" height="3" rx="1" fill="#fdba74" />
+      <circle cx="18" cy="32" r="2.6" fill="#fff" />
+      <path d="M20.6 32H27v-9h6" fill="none" stroke="#fff" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" />
+      <circle cx="33" cy="22" r="3.8" fill="#fde047" stroke="#fff" strokeWidth="1.2" />
+      <path d="M31.4 22l1.3 1.3 2-2.4" fill="none" stroke="#c2410c" strokeWidth="1.1" strokeLinecap="round" strokeLinejoin="round" />
+      <rect x="15" y="28" width="3.5" height="6" rx="1" fill="#fed7aa" />
+    </>
+  ),
+  // Museum pedestal holding a scroll (Founding Gallery).
+  pedestal: (
+    <>
+      <rect x="14" y="40" width="20" height="2.6" rx="1" fill="#854d0e" />
+      <rect x="16.5" y="30" width="15" height="10" rx="1.5" fill="#b45309" stroke="#854d0e" strokeWidth="1.2" />
+      <rect x="15" y="28" width="18" height="2.6" rx="1" fill="#a16207" />
+      <rect x="19" y="13" width="10" height="14" rx="1.5" fill="#fef3c7" stroke="#b45309" strokeWidth="1.2" />
+      <circle cx="19" cy="13.5" r="1.6" fill="#fde68a" stroke="#b45309" strokeWidth="1" />
+      <circle cx="29" cy="13.5" r="1.6" fill="#fde68a" stroke="#b45309" strokeWidth="1" />
+      <line x1="21.5" y1="18" x2="26.5" y2="18" stroke="#b45309" strokeWidth="1" />
+      <line x1="21.5" y1="21" x2="26.5" y2="21" stroke="#b45309" strokeWidth="1" />
+      <line x1="21.5" y1="24" x2="24.5" y2="24" stroke="#b45309" strokeWidth="1" />
+    </>
+  ),
+  // Heritage vault door with a brass dial (Independence Hall).
+  vault: (
+    <>
+      <rect x="11" y="12" width="26" height="28" rx="3" fill="#9f1239" stroke="#881337" strokeWidth="1.6" />
+      <circle cx="24" cy="26" r="8.5" fill="#7f1d3a" stroke="#fda4af" strokeWidth="1.5" />
+      <circle cx="24" cy="26" r="2.4" fill="#fecdd3" />
+      {[0, 1, 2, 3, 4, 5].map((i) => <line key={i} x1="24" y1="26" x2="24" y2="18.5" stroke="#fda4af" strokeWidth="1.2" transform={`rotate(${i * 60} 24 26)`} />)}
+      <rect x="16" y="14.5" width="16" height="2.6" rx="1" fill="#fb7185" />
+    </>
+  ),
+  // Merlion statue on a plinth (Lion City Room).
+  statue: (
+    <>
+      <rect x="15" y="37" width="18" height="3" rx="1" fill="#94a3b8" />
+      <rect x="18" y="32" width="12" height="6" rx="1" fill="#cbd5e1" />
+      {[[16.5, 22], [18.5, 16], [24, 14], [29.5, 16], [31.5, 22]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="2.7" fill="#cbd5e1" />)}
+      <circle cx="24" cy="22" r="8" fill="#e2e8f0" stroke="#94a3b8" strokeWidth="1.3" />
+      <circle cx="21.5" cy="21.5" r="1" fill="#0f172a" />
+      <circle cx="26.5" cy="21.5" r="1" fill="#0f172a" />
+      <path d="M22.5 25.5q1.5 1.5 3 0" stroke="#475569" strokeWidth="1" fill="none" />
+      <path d="M16 31q-3 1.5-3.5 5" stroke="#38bdf8" strokeWidth="1.6" fill="none" strokeLinecap="round" />
+    </>
+  ),
+  // Hawker stall with an awning and a steaming bowl.
+  hawker: (
+    <>
+      <rect x="11" y="22" width="26" height="17" rx="1.5" fill="#fbbf24" stroke="#b45309" strokeWidth="1.3" />
+      <rect x="13" y="30" width="22" height="9" fill="#a16207" opacity="0.35" />
+      <path d="M10 22v-1a2 2 0 0 1 2-2h24a2 2 0 0 1 2 2v1z" fill="#dc2626" />
+      {[0, 1, 2, 3].map((i) => <path key={i} d={`M${10 + i * 7} 22l3.5 3 3.5-3z`} fill="#fca5a5" />)}
+      <path d="M20 28h8l-1 4h-6z" fill="#fff7ed" stroke="#7c2d12" strokeWidth="1" />
+      <path d="M22 27c-0.5-1.5 1-2 0.5-3.5M25.5 27c-0.5-1.5 1-2 0.5-3.5" stroke="#fff" strokeWidth="0.9" fill="none" opacity="0.7" />
+    </>
+  ),
+  // Diya oil lamp with a flame.
+  lamp: (
+    <>
+      <ellipse cx="24" cy="40" rx="11" ry="2.2" fill="#92400e" opacity="0.4" />
+      <path d="M13 31h22l-3 7a3 2 0 0 1-16 0z" fill="#d97706" stroke="#92400e" strokeWidth="1.2" />
+      <ellipse cx="24" cy="31" rx="11" ry="2.6" fill="#fbbf24" />
+      <path d="M31 31c0-2-1.5-2.5-1-4" stroke="#92400e" strokeWidth="1" fill="none" />
+      <path d="M24 30c-2.5-4 2-6 0-13-2.5 7 2.5 9 0 13z" fill="#f97316" />
+      <path d="M24 27c-1.2-2 1-3 0-6-1.2 3 1.2 4 0 6z" fill="#fde047" />
+    </>
+  ),
+  // Orchid bloom on a stem.
+  flower: (
+    <>
+      <line x1="24" y1="22" x2="24" y2="40" stroke="#15803d" strokeWidth="2.2" />
+      <path d="M24 33c-5-1-6-6-1-6" fill="#4ade80" />
+      <ellipse cx="24" cy="12" rx="3" ry="5.5" fill="#c084fc" />
+      <ellipse cx="24" cy="23" rx="3" ry="5.5" fill="#c084fc" />
+      <ellipse cx="15.5" cy="17.5" rx="5.5" ry="3" fill="#a855f7" />
+      <ellipse cx="32.5" cy="17.5" rx="5.5" ry="3" fill="#a855f7" />
+      <circle cx="24" cy="17.5" r="3.4" fill="#fde047" />
+    </>
+  ),
+  // Spiky durian on a fruit crate.
+  fruit: (
+    <>
+      <rect x="13" y="31" width="22" height="8" rx="1.5" fill="#a16207" stroke="#854d0e" strokeWidth="1" />
+      <line x1="13" y1="35" x2="35" y2="35" stroke="#854d0e" strokeWidth="0.8" />
+      <circle cx="24" cy="22" r="9.5" fill="#84cc16" stroke="#4d7c0f" strokeWidth="1.3" />
+      {[[24, 10], [31, 13], [34, 21], [31, 29], [24, 32], [17, 29], [14, 21], [17, 13]].map(([x, y], i) => <polygon key={i} points={`${x},${y - 2.5} ${x + 2.2},${y + 1.5} ${x - 2.2},${y + 1.5}`} fill="#4d7c0f" />)}
+    </>
+  ),
+  // Crossword board with a highlighted column.
+  crosswordboard: (
+    <>
+      <rect x="9" y="11" width="30" height="30" rx="2.5" fill="#fffbeb" stroke="#b45309" strokeWidth="1.6" />
+      {[0, 1, 2, 3].map((r) => [0, 1, 2, 3].map((col) => <rect key={`${r}-${col}`} x={11 + col * 7} y={13 + r * 7} width="6.4" height="6.4" rx="0.6" fill={col === 1 ? "#fde047" : "#fff"} stroke="#d6d3d1" strokeWidth="0.7" />))}
+    </>
+  ),
+  // Sci-fi exit lock panel.
+  lockpanel: (
+    <>
+      <rect x="12" y="11" width="24" height="30" rx="4" fill="#dc2626" stroke="#7f1d1d" strokeWidth="1.6" />
+      <circle cx="24" cy="8" r="2" fill="#fca5a5" />
+      <path d="M19 23v-3a5 5 0 0 1 10 0v3" fill="none" stroke="#fff" strokeWidth="2.3" />
+      <rect x="15.5" y="22.5" width="17" height="13" rx="2.5" fill="#fff" />
+      <circle cx="24" cy="28" r="2.2" fill="#7f1d1d" />
+      <rect x="22.8" y="29" width="2.4" height="4.5" rx="1" fill="#7f1d1d" />
+    </>
+  ),
+  // Lazy river with an otter.
+  river: (
+    <>
+      <rect x="8" y="20" width="32" height="18" rx="3" fill="#0ea5e9" opacity="0.85" />
+      {[26, 31, 36].map((y, i) => <path key={i} d={`M10 ${y}q4 -2.5 8 0t8 0t8 0`} fill="none" stroke="#bae6fd" strokeWidth="1.2" />)}
+      <ellipse cx="24" cy="22" rx="6" ry="4.5" fill="#78350f" />
+      <circle cx="24" cy="17" r="4" fill="#92400e" />
+      <circle cx="22" cy="15" r="1.5" fill="#78350f" />
+      <circle cx="26" cy="15" r="1.5" fill="#78350f" />
+      <circle cx="22.5" cy="16.8" r="0.7" fill="#0f172a" />
+      <circle cx="25.5" cy="16.8" r="0.7" fill="#0f172a" />
+      <circle cx="24" cy="18.2" r="0.8" fill="#0f172a" />
+    </>
+  ),
+  // Growing tree.
+  tree: (
+    <>
+      <ellipse cx="24" cy="41" rx="10" ry="2" fill="#14532d" opacity="0.4" />
+      <rect x="22" y="27" width="4" height="13" rx="1.2" fill="#7c4a1e" />
+      <circle cx="24" cy="19" r="9" fill="#22c55e" />
+      <circle cx="17" cy="23" r="6" fill="#16a34a" />
+      <circle cx="31" cy="23" r="6" fill="#16a34a" />
+      <circle cx="24" cy="15" r="6" fill="#4ade80" />
+    </>
+  ),
+  // Folded paper trail map with a dotted route to a destination pin.
+  trailmap: (
+    <>
+      <rect x="8" y="11" width="32" height="26" rx="2" fill="#fef3c7" stroke="#b45309" strokeWidth="1.6" />
+      <line x1="18.7" y1="11" x2="18.7" y2="37" stroke="#d6a35c" strokeWidth="0.8" opacity="0.7" />
+      <line x1="29.3" y1="11" x2="29.3" y2="37" stroke="#d6a35c" strokeWidth="0.8" opacity="0.7" />
+      <line x1="8" y1="24" x2="40" y2="24" stroke="#d6a35c" strokeWidth="0.8" opacity="0.7" />
+      <path d="M12 33C16 27 22 31 23 25S29 18 32 18" fill="none" stroke="#16a34a" strokeWidth="1.6" strokeDasharray="2 2.4" strokeLinecap="round" />
+      <circle cx="12" cy="33" r="1.9" fill="#16a34a" />
+      <path d="M32 13a3.6 3.6 0 0 1 3.6 3.6c0 2.6-3.6 5.6-3.6 5.6s-3.6-3-3.6-5.6A3.6 3.6 0 0 1 32 13z" fill="#dc2626" />
+      <circle cx="32" cy="16.6" r="1.3" fill="#fff" />
+    </>
+  ),
+  // Open instruction manual / booklet (recycling steps to put in order).
+  manual: (
+    <>
+      <path d="M24 14C20 11 14 11 11 12v25c3-1 9-1 13 2z" fill="#bbf7d0" stroke="#15803d" strokeWidth="1.5" />
+      <path d="M24 14c4-3 10-3 13-2v25c-3-1-9-1-13 2z" fill="#dcfce7" stroke="#15803d" strokeWidth="1.5" />
+      <line x1="24" y1="14" x2="24" y2="39" stroke="#15803d" strokeWidth="1.2" />
+      {[0, 1, 2].map((i) => (
+        <g key={i}>
+          <circle cx="28" cy={20 + i * 5} r="1.5" fill="#16a34a" />
+          <line x1="30.5" y1={20 + i * 5} x2="34" y2={20 + i * 5} stroke="#16a34a" strokeWidth="1.3" strokeLinecap="round" />
+        </g>
+      ))}
+      {[0, 1, 2].map((i) => <line key={i} x1="14" y1={20 + i * 5} x2="20" y2={20 + i * 5} stroke="#16a34a" strokeWidth="1.3" opacity="0.65" strokeLinecap="round" />)}
+    </>
+  ),
+  // Ranger's carved wooden signpost.
+  signpost: (
+    <>
+      <rect x="22.5" y="16" width="3.5" height="24" rx="1" fill="#7c4a1e" />
+      <rect x="11" y="17" width="20" height="6" rx="1.5" fill="#a16207" stroke="#7c4a1e" strokeWidth="1" />
+      <polygon points="31,17 35,20 31,23" fill="#a16207" stroke="#7c4a1e" strokeWidth="1" />
+      {[0, 1, 2].map((i) => <circle key={i} cx={15 + i * 5} cy="20" r="1.4" fill="#fef3c7" />)}
+      <rect x="17" y="26" width="20" height="6" rx="1.5" fill="#b45309" stroke="#7c4a1e" strokeWidth="1" />
+      <polygon points="17,26 13,29 17,32" fill="#b45309" stroke="#7c4a1e" strokeWidth="1" />
+      {[0, 1, 2].map((i) => <rect key={i} x={22 + i * 5} y="28.5" width="3" height="1.6" rx="0.5" fill="#fef3c7" />)}
+    </>
+  ),
+};
+
+/** Renders a themed station object with solved (✓) / locked (padlock) states. */
+function ThemedDevice({ device, tone }: { device: string; tone: "idle" | "solved" | "gated" }) {
+  const art = THEMED_ART[device];
+  if (!art) return null;
+  return (
+    <div className="relative h-full w-full">
+      <svg
+        viewBox="0 0 48 48"
+        className="h-full w-full"
+        style={tone === "gated" ? { filter: "grayscale(1) brightness(0.6)" } : tone === "solved" ? { opacity: 0.92 } : undefined}
+      >
+        {art}
+      </svg>
+      {tone === "solved" && (
+        <span className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-full bg-emerald-500 ring-2 ring-white sm:h-5 sm:w-5">
+          <svg viewBox="0 0 24 24" className="h-2.5 w-2.5 sm:h-3 sm:w-3" fill="none" stroke="#fff" strokeWidth="3.5" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M5 12.5l4 4L19 6.5" />
+          </svg>
+        </span>
+      )}
+      {tone === "gated" && (
+        <span className="absolute right-0 top-0 flex h-4 w-4 items-center justify-center rounded-full bg-slate-800 ring-2 ring-white sm:h-5 sm:w-5">
+          <svg viewBox="0 0 24 24" className="h-2.5 w-2.5 sm:h-3 sm:w-3" fill="none" stroke="#fbbf24" strokeWidth="2.5">
+            <rect x="5" y="11" width="14" height="9" rx="2" />
+            <path d="M8 11V8a4 4 0 0 1 8 0v3" />
+          </svg>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Small themed props (carriables, sink, recycler, door, note) — viewBox 0 0 40 40. */
+const PROP_ART: Record<string, React.ReactNode> = {
+  bottle: (
+    <>
+      <rect x="17" y="5" width="6" height="3" rx="1" fill="#0e7490" />
+      <path d="M17 8h6v2l2 3a3 3 0 0 1 1 2v14a3 3 0 0 1-3 3h-6a3 3 0 0 1-3-3V15a3 3 0 0 1 1-2l2-3z" fill="#bae6fd" stroke="#0891b2" strokeWidth="1.5" />
+      <rect x="14.5" y="20" width="11" height="6" rx="1" fill="#7dd3fc" opacity="0.7" />
+    </>
+  ),
+  key: (
+    <>
+      <circle cx="14" cy="15" r="6.5" fill="none" stroke="#facc15" strokeWidth="3" />
+      <circle cx="14" cy="15" r="2.2" fill="#a16207" />
+      <line x1="18.5" y1="19.5" x2="31" y2="32" stroke="#facc15" strokeWidth="3" strokeLinecap="round" />
+      <line x1="26.5" y1="27.5" x2="29.5" y2="24.5" stroke="#facc15" strokeWidth="3" strokeLinecap="round" />
+      <line x1="29.5" y1="30.5" x2="32.5" y2="27.5" stroke="#facc15" strokeWidth="3" strokeLinecap="round" />
+    </>
+  ),
+  scroll: (
+    <>
+      <rect x="13" y="9" width="14" height="22" rx="2" fill="#fef3c7" stroke="#b45309" strokeWidth="1.5" />
+      <circle cx="13" cy="9.5" r="2.4" fill="#fde68a" stroke="#b45309" strokeWidth="1.2" />
+      <circle cx="27" cy="9.5" r="2.4" fill="#fde68a" stroke="#b45309" strokeWidth="1.2" />
+      <line x1="16" y1="15" x2="24" y2="15" stroke="#b45309" strokeWidth="1.2" />
+      <line x1="16" y1="19" x2="24" y2="19" stroke="#b45309" strokeWidth="1.2" />
+      <line x1="16" y1="23" x2="21" y2="23" stroke="#b45309" strokeWidth="1.2" />
+    </>
+  ),
+  flag: (
+    <>
+      <line x1="13" y1="6" x2="13" y2="34" stroke="#94a3b8" strokeWidth="2" />
+      <rect x="13" y="7" width="18" height="6" fill="#dc2626" />
+      <rect x="13" y="13" width="18" height="6" fill="#fff" stroke="#e2e8f0" strokeWidth="0.5" />
+      <path d="M19 9a3 3 0 1 0 0 5 2.6 2.6 0 1 1 0-5z" fill="#fff" />
+      {[[22, 8.5], [24, 10.5], [22.5, 12.5], [20.5, 12.5], [20.5, 10.5]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="0.7" fill="#fff" />)}
+    </>
+  ),
+  merlion: (
+    <>
+      <rect x="13" y="30" width="14" height="3" rx="1" fill="#94a3b8" />
+      <rect x="16" y="26" width="8" height="4" rx="1" fill="#cbd5e1" />
+      {[[13.5, 19], [15, 14.5], [20, 13], [25, 14.5], [26.5, 19]].map(([x, y], i) => <circle key={i} cx={x} cy={y} r="2.2" fill="#cbd5e1" />)}
+      <circle cx="20" cy="19" r="6.5" fill="#e2e8f0" stroke="#94a3b8" strokeWidth="1.2" />
+      <circle cx="18" cy="18.5" r="0.9" fill="#0f172a" />
+      <circle cx="22" cy="18.5" r="0.9" fill="#0f172a" />
+      <path d="M18.5 22q1.5 1.2 3 0" stroke="#475569" strokeWidth="0.9" fill="none" />
+      <path d="M13.5 27q-2.5 1-3 4" stroke="#38bdf8" strokeWidth="1.4" fill="none" strokeLinecap="round" />
+    </>
+  ),
+  sink: (
+    <>
+      <path d="M27 19v-5a3 3 0 0 0-3-3h-5" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" />
+      <rect x="8" y="18" width="24" height="2.6" rx="1.3" fill="#7dd3fc" />
+      <path d="M9.5 20.5h21l-1.5 5a7 5 0 0 1-18 0z" fill="#e0f2fe" stroke="#0891b2" strokeWidth="1.4" />
+      <line x1="20" y1="22" x2="20" y2="26" stroke="#38bdf8" strokeWidth="1.4" strokeLinecap="round" />
+      <line x1="16.5" y1="22.5" x2="16.5" y2="25" stroke="#38bdf8" strokeWidth="1.2" strokeLinecap="round" />
+      <line x1="23.5" y1="22.5" x2="23.5" y2="25" stroke="#38bdf8" strokeWidth="1.2" strokeLinecap="round" />
+    </>
+  ),
+  recycler: (
+    <>
+      <path d="M12 16h16l-1.5 17h-13z" fill="#16a34a" stroke="#15803d" strokeWidth="1.4" />
+      <rect x="10" y="13" width="20" height="3.5" rx="1.5" fill="#15803d" />
+      <rect x="16" y="11" width="8" height="2.6" rx="1" fill="#22c55e" />
+      {[0, 1, 2].map((i) => <polygon key={i} points="20,21 23,26 17,26" fill="#dcfce7" transform={`rotate(${i * 120} 20 26)`} />)}
+    </>
+  ),
+  note: (
+    <>
+      <rect x="11" y="8" width="18" height="25" rx="2" fill="#fef9c3" stroke="#ca8a04" strokeWidth="1.5" />
+      <rect x="16" y="6" width="8" height="4" rx="1.5" fill="#a16207" />
+      <line x1="14.5" y1="16" x2="25.5" y2="16" stroke="#ca8a04" strokeWidth="1.2" />
+      <line x1="14.5" y1="20" x2="25.5" y2="20" stroke="#ca8a04" strokeWidth="1.2" />
+      <line x1="14.5" y1="24" x2="22" y2="24" stroke="#ca8a04" strokeWidth="1.2" />
+    </>
+  ),
+  doorOpen: (
+    <>
+      <rect x="9" y="5" width="22" height="32" rx="2" fill="#334155" stroke="#1e293b" strokeWidth="1.6" />
+      <rect x="12.5" y="8" width="15" height="29" rx="1" fill="#fde68a" />
+      <rect x="12.5" y="8" width="6.5" height="29" rx="1" fill="#f59e0b" />
+      <circle cx="17" cy="23" r="1.1" fill="#7c2d12" />
+    </>
+  ),
+  doorLocked: (
+    <>
+      <rect x="9" y="5" width="22" height="32" rx="2" fill="#475569" stroke="#1e293b" strokeWidth="1.6" />
+      <line x1="20" y1="5" x2="20" y2="37" stroke="#1e293b" strokeWidth="1" />
+      <rect x="15" y="19" width="10" height="8" rx="1.5" fill="#fbbf24" />
+      <path d="M16.8 19v-2a3.2 3.2 0 0 1 6.4 0v2" fill="none" stroke="#fbbf24" strokeWidth="1.6" />
+      <circle cx="20" cy="23" r="1.3" fill="#1e293b" />
+    </>
+  ),
+};
+
+/** Maps a carry item's `icon` to its themed prop art (direct-delivery items). */
+const ITEM_PROP: Record<string, string> = { key: "key", lion: "merlion", flag: "flag", note: "scroll" };
+
+/** Renders a small themed prop SVG (carriable / sink / door / note). */
+function Prop({ art, className, style }: { art: string; className?: string; style?: React.CSSProperties }) {
+  return (
+    <svg viewBox="0 0 40 40" className={className} style={style}>
+      {PROP_ART[art]}
+    </svg>
+  );
+}
+
 /**
  * Per-scene styling for the station objects so they read as themed equipment
  * standing in the room rather than identical white stickers.
