@@ -81,6 +81,7 @@ async function main() {
   // --- Programs (one per category) ---
   const programSeed = [
     { title: "Story Magic with AI", category: "storytelling", emoji: "📖", ageMin: 6, ageMax: 10, price: 280, summary: "Write & illustrate your own AI storybooks." },
+    { title: "AI Art Studio", category: "art", emoji: "🎨", ageMin: 5, ageMax: 12, price: 260, summary: "Turn your ideas into pictures with AI in any style." },
     { title: "Junior Code Lab", category: "coding", emoji: "💻", ageMin: 8, ageMax: 12, price: 320, summary: "Build apps and websites with an AI coding buddy." },
     { title: "AI Game Studio", category: "game-dev", emoji: "🎮", ageMin: 10, ageMax: 14, price: 340, summary: "Design, code and play your own games." },
     { title: "Phonics Playground", category: "phonics", emoji: "🔤", ageMin: 4, ageMax: 7, price: 220, summary: "Letters, sounds and first words with playful AI games." },
@@ -153,9 +154,12 @@ async function main() {
   // --- Activities ---
   const activitySeed = [
     { slug: "ai-storytelling", title: "AI Storytelling", category: "storytelling", emoji: "📖", live: true, desc: "Create an illustrated story with AI." },
+    { slug: "ai-art", title: "AI Art Studio", category: "art", emoji: "🎨", live: true, desc: "Turn your ideas into pictures with AI." },
     { slug: "ai-phonics", title: "AI Phonics", category: "phonics", emoji: "🔤", live: true, desc: "Match the sound to the word." },
     { slug: "ai-coding", title: "AI Code Quest", category: "coding", emoji: "💻", live: false, desc: "Build with code blocks (coming soon)." },
     { slug: "ai-game-dev", title: "AI Game Maker", category: "game-dev", emoji: "🎮", live: false, desc: "Make your own game (coming soon)." },
+    { slug: "ai-jigsaw", title: "AI Jigsaw", category: "art", emoji: "🧩", live: true, desc: "Turn your art into a puzzle!" },
+    
     // Sample AI Escape Rooms — one activity per playable room (see src/lib/escape-rooms.ts).
     ...ESCAPE_ROOMS.map((r) => ({
       slug: r.activitySlug,

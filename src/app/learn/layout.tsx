@@ -23,6 +23,7 @@ export default async function LearnLayout({
           <nav className="flex items-center gap-5 font-fun font-600 text-slate-500">
             <Link href="/learn" className="hover:text-coral">Activities</Link>
             <Link href="/learn/leaderboard" className="hover:text-coral">🏆 Leaderboard</Link>
+            <Link href="/learn/gallery" className="hover:text-coral">🖼️ My Art</Link>
             <SignOutButton />
           </nav>
         </div>

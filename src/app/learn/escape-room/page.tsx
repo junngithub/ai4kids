@@ -2,13 +2,15 @@ import Link from "next/link";
 import { db } from "@/db";
 import { activities, activityCompletions } from "@/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { redirect } from "next/navigation";
 import { getPortalSession } from "@/lib/portal-session";
 import { ESCAPE_ROOMS } from "@/lib/escape-rooms";
 
 export const dynamic = "force-dynamic";
 
 export default async function EscapeRoomsHub() {
-  const session = (await getPortalSession())!;
+  const session = await getPortalSession();
+  if (!session) redirect("/login?from=/learn/escape-room");
   const learnerId = Number(session.id);
   const slugs = ESCAPE_ROOMS.map((r) => r.activitySlug);
 

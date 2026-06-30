@@ -6,6 +6,7 @@ type Key =
   | "anthropic_auth_token"
   | "firecrawl_api_key"
   | "tavily_api_key"
+  | "gemini_api_key"
   | "gmail_user"
   | "gmail_client_id"
   | "gmail_client_secret"
@@ -16,6 +17,7 @@ type Key =
   | "r2_bucket"
   | "r2_public_url"
   | "r2_endpoint"
+  | "cloudflare_ai_token"
   | "turnstile_site_key"
   | "turnstile_secret"
   | "n8n_api_url"
@@ -47,6 +49,16 @@ const FIELDS: Record<
     label: "Tavily — Search API key",
     hint: "Used by AI Assist to gather up-to-date research context before drafting.",
     placeholder: "tvly-…",
+  },
+  gemini_api_key: {
+    label: "Google Gemini — API key (kids AI Art Studio)",
+    hint: "From Google AI Studio → Get API key. Powers Nano Banana image generation in the /learn AI Art Studio. Used only for the children's games, not the CMS chatbot. Image generation needs billing enabled on the key's Google Cloud project.",
+    placeholder: "AIza…",
+  },
+  cloudflare_ai_token: {
+    label: "Cloudflare Workers AI — API token (free image fallback)",
+    hint: "From Cloudflare → AI → Workers AI → API Tokens (Workers AI read/run). Free-tier image generation used by the AI Art Studio when Gemini has no quota. Reuses the Account ID from the R2 settings below.",
+    placeholder: "v1.0-…",
   },
   gmail_user: {
     label: "Gmail — Sender address",
@@ -155,7 +167,7 @@ const GROUPS: Group[] = [
   {
     title: "AI integrations",
     description: "API keys for Claude, research, and content tooling.",
-    keys: ["anthropic_auth_token", "firecrawl_api_key", "tavily_api_key"],
+    keys: ["anthropic_auth_token", "firecrawl_api_key", "tavily_api_key", "gemini_api_key", "cloudflare_ai_token"],
   },
   {
     title: "Gmail OAuth (lead notification email)",

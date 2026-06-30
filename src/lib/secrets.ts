@@ -34,6 +34,7 @@ export type CredentialKey =
   | "anthropic_auth_token"
   | "firecrawl_api_key"
   | "tavily_api_key"
+  | "gemini_api_key"
   | "gmail_user"
   | "gmail_client_id"
   | "gmail_client_secret"
@@ -44,6 +45,7 @@ export type CredentialKey =
   | "r2_bucket"
   | "r2_public_url"
   | "r2_endpoint"
+  | "cloudflare_ai_token"
   | "turnstile_site_key"
   | "turnstile_secret"
   | "n8n_api_url"
@@ -76,6 +78,7 @@ export async function getCredential(key: CredentialKey): Promise<string | null> 
     anthropic_auth_token: process.env.ANTHROPIC_AUTH_TOKEN,
     firecrawl_api_key: process.env.FIRECRAWL_API_KEY,
     tavily_api_key: process.env.TAVILY_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
     gmail_user: process.env.GMAIL_USER,
     gmail_client_id: process.env.GMAIL_CLIENT_ID,
     gmail_client_secret: process.env.GMAIL_CLIENT_SECRET,
@@ -86,6 +89,7 @@ export async function getCredential(key: CredentialKey): Promise<string | null> 
     r2_bucket: process.env.R2_BUCKET,
     r2_public_url: process.env.R2_PUBLIC_URL,
     r2_endpoint: process.env.R2_ENDPOINT,
+    cloudflare_ai_token: process.env.CLOUDFLARE_AI_TOKEN,
     turnstile_site_key: process.env.TURNSTILE_SITE_KEY,
     turnstile_secret: process.env.TURNSTILE_SECRET,
     n8n_api_url: process.env.N8N_API_URL,
@@ -142,6 +146,7 @@ export async function getCredentialSource(key: CredentialKey): Promise<Credentia
     anthropic_auth_token: process.env.ANTHROPIC_AUTH_TOKEN,
     firecrawl_api_key: process.env.FIRECRAWL_API_KEY,
     tavily_api_key: process.env.TAVILY_API_KEY,
+    gemini_api_key: process.env.GEMINI_API_KEY,
     gmail_user: process.env.GMAIL_USER,
     gmail_client_id: process.env.GMAIL_CLIENT_ID,
     gmail_client_secret: process.env.GMAIL_CLIENT_SECRET,
@@ -152,6 +157,7 @@ export async function getCredentialSource(key: CredentialKey): Promise<Credentia
     r2_bucket: process.env.R2_BUCKET,
     r2_public_url: process.env.R2_PUBLIC_URL,
     r2_endpoint: process.env.R2_ENDPOINT,
+    cloudflare_ai_token: process.env.CLOUDFLARE_AI_TOKEN,
     turnstile_site_key: process.env.TURNSTILE_SITE_KEY,
     turnstile_secret: process.env.TURNSTILE_SECRET,
     n8n_api_url: process.env.N8N_API_URL,

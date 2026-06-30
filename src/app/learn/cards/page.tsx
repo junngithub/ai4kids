@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/db";
 import { activities, activityCompletions } from "@/db/schema";
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { redirect } from "next/navigation";
 import { getPortalSession } from "@/lib/portal-session";
 import { CARD_GAMES, modeLabel } from "@/lib/card-games/meta";
 
@@ -12,7 +13,8 @@ export const metadata = {
 };
 
 export default async function CardGamesHub() {
-  const session = (await getPortalSession())!;
+  const session = await getPortalSession();
+  if (!session) redirect("/login?from=/learn/cards");
   const learnerId = Number(session.id);
   const slugs = CARD_GAMES.map((g) => g.activitySlug);
 

@@ -27,6 +27,7 @@ export const roleEnum = pgEnum("role", [
 // --- Kids-AI portal enums ---
 export const programCategoryEnum = pgEnum("program_category", [
   "storytelling",
+  "art",
   "coding",
   "game-dev",
   "phonics",
@@ -447,6 +448,23 @@ export const learnerAchievements = pgTable(
     awardedAt: timestamp("awarded_at").defaultNow().notNull(),
   },
   (t) => [uniqueIndex("learner_achievements_uq").on(t.learnerId, t.achievementId)],
+);
+
+// Images a learner generated in the AI Art Studio (/learn/art).
+export const learnerArtworks = pgTable(
+  "learner_artworks",
+  {
+    id: serial("id").primaryKey(),
+    learnerId: integer("learner_id")
+      .notNull()
+      .references(() => users.id, { onDelete: "cascade" }),
+    originalPrompt: text("original_prompt").notNull(), // the child's raw words (for parent review)
+    prompt: text("prompt").notNull(), // safety-cleaned prompt sent to Nano Banana
+    style: text("style").notNull(), // one of the allowlisted art styles
+    r2Url: text("r2_url").notNull(), // generated image stored in R2
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (t) => [index("learner_artworks_learner_idx").on(t.learnerId)],
 );
 
 // Relations

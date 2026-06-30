@@ -1,11 +1,13 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getPortalSession } from "@/lib/portal-session";
 import { getParentChildren, getLearnerStats } from "@/lib/portal-queries";
 
 export const dynamic = "force-dynamic";
 
 export default async function ChildrenPage() {
-  const session = (await getPortalSession())!;
+  const session = await getPortalSession();
+  if (!session) redirect("/login?from=/parent/children");
   const kids = await getParentChildren(Number(session.id));
   const withStats = await Promise.all(
     kids.map(async (k) => ({ k, s: await getLearnerStats(k.id) })),

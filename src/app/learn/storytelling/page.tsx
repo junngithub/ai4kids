@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 
-type Story = { title: string; scenes: { text: string; emojis: string }[] };
+type Story = { title: string; scenes: { text: string; emojis: string; image?: string }[] };
 
 const IDEAS = [
   "a dragon who is afraid of fire",
@@ -89,7 +89,12 @@ export default function StorytellingPage() {
           <div className="mt-4 space-y-5">
             {story.scenes.map((s, i) => (
               <div key={i} className="rounded-2xl bg-gradient-to-r from-amber-50 to-white p-5 ring-1 ring-amber-100">
-                <div className="text-5xl">{s.emojis}</div>
+                {s.image ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img src={s.image} alt={s.text} className="w-full rounded-xl ring-1 ring-amber-100" />
+                ) : (
+                  <div className="text-5xl">{s.emojis}</div>
+                )}
                 <p className="mt-2 font-round text-lg text-slate-700">{s.text}</p>
               </div>
             ))}

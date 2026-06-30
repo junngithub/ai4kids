@@ -7,8 +7,33 @@ import {
   activityCompletions,
   learnerAchievements,
   achievements,
+  learnerArtworks,
 } from "@/db/schema";
-import { eq, desc, inArray, sql } from "drizzle-orm";
+import { eq, desc, inArray, sql, and } from "drizzle-orm";
+
+export type Artwork = {
+  id: number;
+  prompt: string;
+  style: string;
+  r2Url: string;
+  createdAt: Date;
+};
+
+/** All pictures a learner has made in the Art Studio, newest first. */
+export async function getLearnerArtworks(learnerId: number, style?: string, limit = 60): Promise<Artwork[]> {
+  return db
+    .select({
+      id: learnerArtworks.id,
+      prompt: learnerArtworks.prompt,
+      style: learnerArtworks.style,
+      r2Url: learnerArtworks.r2Url,
+      createdAt: learnerArtworks.createdAt,
+    })
+    .from(learnerArtworks)
+    .where(style ? and(eq(learnerArtworks.learnerId, learnerId), eq(learnerArtworks.style, style)) : eq(learnerArtworks.learnerId, learnerId))
+    .orderBy(desc(learnerArtworks.createdAt))
+    .limit(limit);
+}
 
 export type Kid = {
   id: number;

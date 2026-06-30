@@ -7,6 +7,8 @@ argument-hint: [resource...|all]
 
 Push local Postgres rows to the production database through the bearer-token sync API (`/api/admin/sync/*`).
 
+> This is the **DB-content** half of "publish". The **code/app** half is [/git-push](git-push.md) (commit & push to GitHub → Coolify auto-redeploy). They're separate: this command never touches git; `/git-push` never touches the sync API.
+
 **Arguments**: `$ARGUMENTS` — one or more of `menus`, `settings`, `taxonomy`, `pages`, `posts`, or `all`. If empty, default to a guided flow: show the user what's locally different and ask which resources to push.
 
 ## Workflow
