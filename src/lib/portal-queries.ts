@@ -30,7 +30,7 @@ export async function getLearnerArtworks(learnerId: number, style?: string, limi
       createdAt: learnerArtworks.createdAt,
     })
     .from(learnerArtworks)
-    .where(style ? and(eq(learnerArtworks.learnerId, learnerId), eq(learnerArtworks.style, learnerArtworks.style)) : eq(learnerArtworks.learnerId, learnerId))
+    .where(style ? and(eq(learnerArtworks.learnerId, learnerId), eq(learnerArtworks.style, style)) : eq(learnerArtworks.learnerId, learnerId))
     .orderBy(desc(learnerArtworks.createdAt))
     .limit(limit);
 }

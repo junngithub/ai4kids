@@ -35,6 +35,12 @@ export default async function GalleryPage({ searchParams }: { searchParams: Prom
               <div className="absolute right-2 top-2 opacity-0 transition group-hover:opacity-100">
                 <DeleteArtButton id={a.id} />
               </div>
+              <Link
+                href={`/learn/jigsaw/${a.id}`}
+                className="absolute bottom-9 left-2 rounded-full bg-grape/90 px-3 py-1 font-fun text-xs font-700 text-white shadow opacity-0 transition group-hover:opacity-100"
+              >
+                Play 🧩
+              </Link>
               <figcaption className="p-2 font-round text-xs text-slate-500 line-clamp-2">{a.prompt}</figcaption>
             </figure>
           ))}

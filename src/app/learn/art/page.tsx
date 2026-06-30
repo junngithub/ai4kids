@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { JigsawBoard } from "@/components/portal/JigsawBoard";
 
 const IDEAS = [
   "a friendly dragon having a picnic",
@@ -22,18 +23,20 @@ export default function ArtStudioPage() {
   const [prompt, setPrompt] = useState("");
   const [style, setStyle] = useState("cartoon");
   const [loading, setLoading] = useState(false);
-  const [imageUrl, setImageUrl] = useState<string | null>(null);
+  const [imageURL, setImageURL] = useState<string | null>(null);
   const [score, setScore] = useState<number | null>(null);
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
+  const [playing, setPlaying] = useState(false);
 
   async function generate() {
     if (!prompt.trim()) return;
     setLoading(true);
     setError("");
     setNotice("");
-    setImageUrl(null);
+    setImageURL(null);
     setScore(null);
+    setPlaying(false);
     try {
       const res = await fetch("/api/learn/art", {
         method: "POST",
@@ -45,7 +48,7 @@ export default function ArtStudioPage() {
       if (data.blocked || data.placeholder) {
         setNotice(data.message);
       } else {
-        setImageUrl(data.imageUrl);
+        setImageURL(data.imageUrl);
         setScore(data.score);
       }
     } catch (e) {
@@ -112,7 +115,7 @@ export default function ArtStudioPage() {
         {error && <p className="mt-3 text-coral">{error}</p>}
       </div>
 
-      {imageUrl && (
+      {imageURL && (
         <div className="mt-6 rounded-[2rem] bg-white p-6 shadow-sm ring-1 ring-orange-100">
           {score != null && (
             <div className="mb-4 inline-block rounded-full bg-mint/20 px-4 py-1 font-fun font-700 text-emerald-600">
@@ -121,12 +124,28 @@ export default function ArtStudioPage() {
           )}
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
-            src={imageUrl}
+            src={imageURL}
             alt={prompt}
             className="w-full rounded-2xl ring-1 ring-orange-100"
           />
+          {!playing ? (
+            <button
+              onClick={() => setPlaying(true)}
+              className="mt-4 rounded-full bg-grape px-6 py-3 font-fun font-700 text-white shadow"
+            >
+              Play a puzzle 🧩
+            </button>
+          ) : (
+            <div className="mt-5">
+              <JigsawBoard imageURL={imageURL} />
+              <button onClick={() => setPlaying(false)} className="mt-3 font-fun text-sm font-600 text-slate-400 hover:text-coral">
+                ← Back to my picture
+              </button>
+            </div>
+          )}
+
           <button
-            onClick={() => { setImageUrl(null); setScore(null); setPrompt(""); }}
+            onClick={() => { setImageURL(null); setScore(null); setPrompt(""); }}
             className="mt-6 rounded-full bg-sky-500 px-6 py-3 font-fun font-700 text-white shadow"
           >
             Make another! 🎨
