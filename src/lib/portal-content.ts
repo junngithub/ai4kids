@@ -4,6 +4,7 @@
  */
 export type CategorySlug =
   | "storytelling"
+  | "art"
   | "coding"
   | "game-dev"
   | "phonics"
@@ -28,6 +29,14 @@ export const CATEGORIES: CategoryDef[] = [
     accent: "bg-coral/15 text-coral",
     ring: "ring-coral/30",
     blurb: "Dream up magical tales and watch AI illustrate them, page by page.",
+  },
+  {
+    slug: "art",
+    title: "AI Art Studio",
+    emoji: "🎨",
+    accent: "bg-tangerine/15 text-orange-600",
+    ring: "ring-tangerine/30",
+    blurb: "Turn your ideas into pictures — AI paints them in any style you pick.",
   },
   {
     slug: "coding",

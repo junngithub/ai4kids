@@ -15,6 +15,13 @@
       "when": 1780909589384,
       "tag": "0001_add_escape_sessions",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1782703851635,
+      "tag": "0002_famous_butterfly",
+      "breakpoints": true
     }
   ]
 }

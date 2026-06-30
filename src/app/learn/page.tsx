@@ -2,6 +2,7 @@ import Link from "next/link";
 import { db } from "@/db";
 import { activities, activityCompletions } from "@/db/schema";
 import { eq, sql } from "drizzle-orm";
+import { redirect } from "next/navigation";
 import { getPortalSession } from "@/lib/portal-session";
 import { getLearnerStats, getLearnerBadges } from "@/lib/portal-queries";
 import { CATEGORY_BY_SLUG } from "@/lib/portal-content";
@@ -12,6 +13,7 @@ export const dynamic = "force-dynamic";
 // Which activity slugs have a real playable route.
 const LIVE_ROUTES: Record<string, string> = {
   "ai-storytelling": "/learn/storytelling",
+  "ai-art": "/learn/art",
   "ai-phonics": "/learn/phonics",
   // Each sample escape room is its own activity, routed by room slug.
   ...Object.fromEntries(
@@ -20,7 +22,8 @@ const LIVE_ROUTES: Record<string, string> = {
 };
 
 export default async function LearnHome() {
-  const session = (await getPortalSession())!;
+  const session = await getPortalSession();
+  if (!session) redirect("/login?from=/learn");
   const learnerId = Number(session.id);
 
   const [all, stats, badges] = await Promise.all([
@@ -87,6 +90,8 @@ export default async function LearnHome() {
           if (a.category === "free-games") {
             return a.id === cardGames[0]?.id ? [<CardGamesTile key="cards-hub" count={cardGames.length} played={cardPlayed} />] : [];
           }
+          
+          if (a.slug === "ai-jigsaw") return []; // launched from Art Studio
 
           const cat = CATEGORY_BY_SLUG[a.category];
           const route = LIVE_ROUTES[a.slug];
