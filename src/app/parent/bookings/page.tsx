@@ -1,6 +1,7 @@
 import { db } from "@/db";
 import { bookings, classes, programs, users } from "@/db/schema";
 import { eq, desc } from "drizzle-orm";
+import { redirect } from "next/navigation";
 import { getPortalSession } from "@/lib/portal-session";
 import { getPayNowConfig } from "@/lib/portal-settings";
 import { generatePayNowQrDataUrl } from "@/lib/paynow";
@@ -22,7 +23,8 @@ export default async function ParentBookings({
   searchParams: Promise<{ booked?: string }>;
 }) {
   const { booked } = await searchParams;
-  const session = (await getPortalSession())!;
+  const session = await getPortalSession();
+  if (!session) redirect("/login?from=/parent/bookings");
   const parentId = Number(session.id);
 
   const rows = await db

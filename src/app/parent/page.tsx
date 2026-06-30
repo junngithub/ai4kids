@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getPortalSession } from "@/lib/portal-session";
 import {
   getParentChildren,
@@ -9,7 +10,8 @@ import {
 export const dynamic = "force-dynamic";
 
 export default async function ParentHome() {
-  const session = (await getPortalSession())!;
+  const session = await getPortalSession();
+  if (!session) redirect("/login?from=/parent");
   const parentId = Number(session.id);
   const kids = await getParentChildren(parentId);
 

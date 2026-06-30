@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
 import { getPortalSession } from "@/lib/portal-session";
 import { getGlobalLeaderboard } from "@/lib/portal-queries";
 
@@ -7,7 +8,8 @@ export const dynamic = "force-dynamic";
 const MEDALS = ["🥇", "🥈", "🥉"];
 
 export default async function LeaderboardPage() {
-  const session = (await getPortalSession())!;
+  const session = await getPortalSession();
+  if (!session) redirect("/login?from=/learn/leaderboard");
   const rows = await getGlobalLeaderboard(20);
   const meId = Number(session.id);
 
