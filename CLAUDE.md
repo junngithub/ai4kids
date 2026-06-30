@@ -115,7 +115,12 @@ Every public form (contact form, SSG ATO consultation form, etc.) POSTs to `/api
 
 ### Design system
 
-Dark sci-fi/robotics aesthetic. Tailwind 4 with `@theme` design tokens in [src/app/globals.css](src/app/globals.css) — colors are CSS vars consumed as `(--color-cyan)`, `(--color-purple)`, etc. Utility classes: `glass`, `card-hover`, `btn-primary`, `kicker`, `gradient-text`, `gradient-text-warm`, `glow-blob`. Fonts: Exo 2 (display), Inter (sans), JetBrains Mono (mono) — already loaded in [src/app/layout.tsx](src/app/layout.tsx) via `next/font`; do not re-import Google Fonts elsewhere. All UI work in this repo should follow [.claude/skills/frontend-design/SKILL.md](.claude/skills/frontend-design/SKILL.md).
+**Two distinct themes live in this repo — do not mix them.** Tailwind 4 with `@theme` design tokens in [src/app/globals.css](src/app/globals.css); fonts are loaded once in [src/app/layout.tsx](src/app/layout.tsx) via `next/font` (do not re-import Google Fonts elsewhere).
+
+- **Bright kids/public theme — the DEFAULT** (everything a child or parent sees: the landing page, `/login`, `/dashboard`, and all `/learn` games, activities, and escape rooms). Cream/white backgrounds, `coral`/`sky`/`mint`/`grape`/`sunny`/`bubble` accents, big rounded cards, soft shadows, emoji icons, gentle hover/float motion. Fonts: `font-fun` (Fredoka, display) + `font-round` (Nunito, body). This is the `html/body` default in globals.css.
+- **Dark sci-fi/robotics theme — ADMIN ONLY**, scoped to `.admin-shell` (the `/admin` back-office) and `.prose-dark` (CMS/blog HTML). Near-black backgrounds, `cyan`/`purple` accents, utility classes `glass`, `card-hover`, `btn-primary`, `kicker`, `gradient-text`, `gradient-text-warm`, `glow-blob`. Fonts: Exo 2 (display), Inter (sans), JetBrains Mono (mono). Only use these inside `/admin`.
+
+All UI work in this repo should follow [.claude/skills/frontend-design/SKILL.md](.claude/skills/frontend-design/SKILL.md), which is locked to the bright kids/public theme (with a note on the admin-only dark theme).
 
 ## Deployment
 
