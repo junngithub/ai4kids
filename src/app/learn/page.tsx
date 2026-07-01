@@ -13,7 +13,6 @@ export const dynamic = "force-dynamic";
 // Which activity slugs have a real playable route.
 const LIVE_ROUTES: Record<string, string> = {
   "ai-storytelling": "/learn/storytelling",
-  "ai-story-builder": "/learn/story-builder",
   "ai-art": "/learn/art",
   "ai-phonics": "/learn/phonics",
   // Each sample escape room is its own activity, routed by room slug.

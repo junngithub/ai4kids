@@ -153,8 +153,7 @@ async function main() {
 
   // --- Activities ---
   const activitySeed = [
-    { slug: "ai-storytelling", title: "AI Storytelling", category: "storytelling", emoji: "📖", live: true, desc: "Create an illustrated story with AI." },
-    { slug: "ai-story-builder", title: "Story Builder", category: "storytelling", emoji: "🪄", live: true, desc: "Pick your hero and build a branching story!" },
+    { slug: "ai-storytelling", title: "Story Time", category: "storytelling", emoji: "📖", live: true, desc: "Build a branching tale or write your own — illustrated by AI." },
     { slug: "ai-art", title: "AI Art Studio", category: "art", emoji: "🎨", live: true, desc: "Turn your ideas into pictures with AI." },
     { slug: "ai-phonics", title: "Phonics Quest", category: "phonics", emoji: "🔤", live: true, desc: "Travel the worlds and master every sound!" },
     { slug: "ai-coding", title: "AI Code Quest", category: "coding", emoji: "💻", live: false, desc: "Build with code blocks (coming soon)." },
